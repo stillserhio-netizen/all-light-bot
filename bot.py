@@ -42,26 +42,75 @@ def send_message(text):
         "text": text
     })
 
+# ---------------- HELPERS ----------------
+
+def build_intervals(fact_data):
+    intervals = []
+    current_start = None
+
+    for hour in range(1, 25):
+        h = str(hour)
+        status = fact_data.get(h)
+
+        if status in ["no", "first", "second"]:
+
+            # визначаємо початок години
+            start_hour = hour - 1
+            end_hour = hour
+
+            if status == "no":
+                block_start = start_hour * 60
+                block_end = end_hour * 60
+
+            elif status == "first":
+                block_start = start_hour * 60
+                block_end = start_hour * 60 + 30
+
+            elif status == "second":
+                block_start = start_hour * 60 + 30
+                block_end = end_hour * 60
+
+            if current_start is None:
+                current_start = [block_start, block_end]
+            else:
+                if block_start == current_start[1]:
+                    current_start[1] = block_end
+                else:
+                    intervals.append(current_start)
+                    current_start = [block_start, block_end]
+
+        else:
+            if current_start:
+                intervals.append(current_start)
+                current_start = None
+
+    if current_start:
+        intervals.append(current_start)
+
+    return intervals
+
+
+def format_time(minutes):
+    h = minutes // 60
+    m = minutes % 60
+    return f"{h:02d}:{m:02d}"
+
 # ---------------- MAIN ----------------
 
 def main():
 
     session = requests.Session()
 
-    # GET сторінки
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
     if r1.status_code != 200:
-        print("GET FAILED")
         return
 
-    # CSRF
     csrf_match = re.search(
         r'name="csrf-token" content="(.+?)"',
         r1.text
     )
 
     if not csrf_match:
-        print("NO CSRF")
         return
 
     csrf_token = csrf_match.group(1)
@@ -91,7 +140,6 @@ def main():
     r2 = session.post(API_URL, data=payload, headers=headers_post)
 
     if r2.status_code != 200:
-        print("POST FAILED")
         return
 
     data = r2.json()
@@ -99,38 +147,23 @@ def main():
     today_key = str(data["fact"]["today"])
     fact_data = data["fact"]["data"][today_key][QUEUE]
 
-    current_hour = str(datetime.now().hour + 1)
+    intervals = build_intervals(fact_data)
 
-    status = fact_data.get(current_hour)
+    if not intervals:
+        message = f"{QUEUE_NAME}\nДо кінця доби світло буде"
+    else:
+        message = f"{QUEUE_NAME}\nСвітла не буде:\n"
+        for start, end in intervals:
+            message += f"{format_time(start)}–{format_time(end)}\n"
 
-    # формуємо хеш
-    state_string = f"{QUEUE}-{current_hour}-{status}"
-    new_hash = hashlib.md5(state_string.encode()).hexdigest()
-
+    new_hash = hashlib.md5(message.encode()).hexdigest()
     old_hash = load_state()
 
     if new_hash == old_hash:
-        print("NO CHANGE")
         return
 
     save_state(new_hash)
-
-    time_label = (
-        data["preset"]["time_zone"][current_hour][1]
-        + " - " +
-        data["preset"]["time_zone"][current_hour][2]
-    )
-
-    status_text = data["preset"]["time_type"].get(status, status)
-
-    message = (
-        f"{QUEUE_NAME}\n"
-        f"{time_label}\n"
-        f"{status_text}"
-    )
-
     send_message(message)
-    print("SENT:", message)
 
 
 if __name__ == "__main__":
