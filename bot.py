@@ -8,7 +8,8 @@ STREET = "вул. Теліги Олени"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
-    "X-Requested-With": "XMLHttpRequest"
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": "https://www.dtek-krem.com.ua/ua/shutdowns"
 }
 
 def main():
@@ -16,15 +17,12 @@ def main():
 
     payload = {
         "method": "getHomeNum",
-        "city": CITY,
-        "street": STREET,
-        "updateFact": now_str
+        "data[0][name]": "city",
+        "data[0][value]": CITY,
+        "data[1][name]": "street",
+        "data[1][value]": STREET,
+        "data[2][name]": "updateFact",
+        "data[2][value]": now_str
     }
 
-    r = requests.post(API_URL, data=payload, headers=HEADERS, timeout=20)
-
-    print("STATUS:", r.status_code)
-    print("TEXT:", r.text)
-
-if __name__ == "__main__":
-    main()
+    r = requests.post(API_URL, data=payload, headers
