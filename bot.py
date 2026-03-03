@@ -7,17 +7,24 @@ API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 CITY = "м. Богуслав"
 STREET = "вул. Теліги Олени"
 
-HEADERS = {
+HEADERS_GET = {
+    "User-Agent": "Mozilla/5.0"
+}
+
+HEADERS_POST = {
     "User-Agent": "Mozilla/5.0",
     "X-Requested-With": "XMLHttpRequest",
-    "Referer": BASE_URL
+    "Origin": "https://www.dtek-krem.com.ua",
+    "Referer": BASE_URL,
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
 }
 
 def main():
     session = requests.Session()
 
-    # 1. Отримуємо cookies
-    session.get(BASE_URL, headers=HEADERS, timeout=20)
+    # 1. Отримати сторінку щоб зловити cookies
+    r1 = session.get(BASE_URL, headers=HEADERS_GET, timeout=20)
+    print("GET STATUS:", r1.status_code)
 
     now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
 
@@ -31,15 +38,15 @@ def main():
         "data[2][value]": now_str
     }
 
-    r = session.post(
+    r2 = session.post(
         API_URL,
         data=payload,
-        headers=HEADERS,
+        headers=HEADERS_POST,
         timeout=20
     )
 
-    print("STATUS:", r.status_code)
-    print("TEXT:", r.text)
+    print("POST STATUS:", r2.status_code)
+    print("RESPONSE:", r2.text)
 
 if __name__ == "__main__":
     main()
