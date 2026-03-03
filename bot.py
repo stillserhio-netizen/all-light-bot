@@ -1,6 +1,7 @@
 import requests
 import re
 import hashlib
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -9,18 +10,27 @@ from zoneinfo import ZoneInfo
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
-CITY = "м. Богуслав"
-STREET = "вул. Теліги Олени"
-
-QUEUE = "GPV1.2"
-QUEUE_NAME = "Черга 1.2"
-
 BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+ADDRESSES = [
+    {
+        "city": "м. Богуслав",
+        "street": "вул. Теліги Олени",
+        "queue_code": "GPV1.2",
+        "queue_name": "Черга 1.2"
+    },
+    {
+        "city": "м. Біла Церква",
+        "street": "вул. Голуба Професора",
+        "queue_code": "GPV2.2",
+        "queue_name": "Черга 2.2"
+    }
+]
 
 # ---------------- STATE ----------------
 
@@ -94,15 +104,15 @@ def build_intervals(fact_data):
 
     return intervals
 
-# ---------------- MAIN ----------------
+# ---------------- REQUEST ----------------
 
-def main():
+def get_queue_result(city, street, queue_code):
 
     session = requests.Session()
 
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
     if r1.status_code != 200:
-        return
+        return None
 
     csrf_match = re.search(
         r'name="csrf-token" content="(.+?)"',
@@ -110,7 +120,7 @@ def main():
     )
 
     if not csrf_match:
-        return
+        return None
 
     csrf_token = csrf_match.group(1)
 
@@ -119,9 +129,9 @@ def main():
     payload = {
         "method": "getHomeNum",
         "data[0][name]": "city",
-        "data[0][value]": CITY,
+        "data[0][value]": city,
         "data[1][name]": "street",
-        "data[1][value]": STREET,
+        "data[1][value]": street,
         "data[2][name]": "updateFact",
         "data[2][value]": now_str
     }
@@ -137,40 +147,66 @@ def main():
     r2 = session.post(API_URL, data=payload, headers=headers_post)
 
     if r2.status_code != 200:
-        return
+        return None
 
     data = r2.json()
 
     today_timestamp = data["fact"]["today"]
-    fact_data = data["fact"]["data"][str(today_timestamp)][QUEUE]
+    fact_data = data["fact"]["data"][str(today_timestamp)][queue_code]
 
     intervals = build_intervals(fact_data)
 
     now = datetime.now(KYIV_TZ)
     current_minutes = now.hour * 60 + now.minute
 
-    # залишаємо тільки ті інтервали, які ще не завершилися
     future_intervals = [
         (start, end) for start, end in intervals
         if end > current_minutes
     ]
 
-    if not future_intervals:
-        message = f"{QUEUE_NAME}\nДо кінця доби світло буде"
-    else:
-        message = f"{QUEUE_NAME}\nСвітла не буде:\n"
-        for start, end in future_intervals:
-            message += f"{format_time(start)}–{format_time(end)}\n"
+    return future_intervals
 
-    new_hash = hashlib.md5(message.encode()).hexdigest()
+# ---------------- MAIN ----------------
+
+def main():
+
+    message_blocks = []
+
+    for address in ADDRESSES:
+
+        result = get_queue_result(
+            address["city"],
+            address["street"],
+            address["queue_code"]
+        )
+
+        time.sleep(3)  # затримка між запитами
+
+        if result is None:
+            continue
+
+        if not result:
+            block = f"{address['queue_name']}\nДо кінця доби світло буде"
+        else:
+            block = f"{address['queue_name']}\n"
+            for start, end in result:
+                block += f"{format_time(start)}–{format_time(end)}\n"
+
+        message_blocks.append(block.strip())
+
+    if not message_blocks:
+        return
+
+    final_message = "\n\n".join(message_blocks)
+
+    new_hash = hashlib.md5(final_message.encode()).hexdigest()
     old_hash = load_state()
 
     if new_hash == old_hash:
         return
 
     save_state(new_hash)
-    send_message(message)
-
+    send_message(final_message)
 
 if __name__ == "__main__":
     main()
