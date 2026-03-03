@@ -1,16 +1,30 @@
 import requests
+from datetime import datetime
 
-BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
-CHAT_ID = "-1003802691352"
+API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
+
+CITY = "м. Богуслав"
+STREET = "вул. Теліги Олени"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "X-Requested-With": "XMLHttpRequest"
+}
 
 def main():
-    requests.post(
-        f"https://api.telegram.org/bot8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs/sendMessage",
-        data={
-            "chat_id": CHAT_ID,
-            "text": "Бот запущено з GitHub ✅"
-        }
-    )
+    now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+    payload = {
+        "method": "getHomeNum",
+        "city": CITY,
+        "street": STREET,
+        "updateFact": now_str
+    }
+
+    r = requests.post(API_URL, data=payload, headers=HEADERS, timeout=20)
+
+    print("STATUS:", r.status_code)
+    print("TEXT:", r.text)
 
 if __name__ == "__main__":
     main()
