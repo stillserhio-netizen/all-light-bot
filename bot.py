@@ -106,7 +106,7 @@ def build_intervals(fact_data):
 
 # ---------------- REQUEST ----------------
 
-def get_queue_result(city, street, queue_code):
+def get_queue_data(city, street, queue_code):
 
     session = requests.Session()
 
@@ -149,48 +149,70 @@ def get_queue_result(city, street, queue_code):
     if r2.status_code != 200:
         return None
 
-    data = r2.json()
-
-    today_timestamp = data["fact"]["today"]
-    fact_data = data["fact"]["data"][str(today_timestamp)][queue_code]
-
-    intervals = build_intervals(fact_data)
-
-    now = datetime.now(KYIV_TZ)
-    current_minutes = now.hour * 60 + now.minute
-
-    future_intervals = [
-        (start, end) for start, end in intervals
-        if end > current_minutes
-    ]
-
-    return future_intervals
+    return r2.json()
 
 # ---------------- MAIN ----------------
 
 def main():
 
     message_blocks = []
+    now = datetime.now(KYIV_TZ)
+    current_minutes = now.hour * 60 + now.minute
 
     for address in ADDRESSES:
 
-        result = get_queue_result(
+        data = get_queue_data(
             address["city"],
             address["street"],
             address["queue_code"]
         )
 
-        time.sleep(3)  # затримка між запитами
+        time.sleep(3)
 
-        if result is None:
+        if not data:
             continue
 
-        if not result:
-            block = f"{address['queue_name']}\nДо кінця доби світло буде"
+        all_days = data["fact"]["data"]
+        timestamps = sorted(all_days.keys())
+
+        today_ts = timestamps[0]
+        tomorrow_ts = timestamps[1] if len(timestamps) > 1 else None
+
+        block = f"{address['queue_name']}\n"
+
+        # -------- СЬОГОДНІ --------
+
+        today_intervals = build_intervals(
+            all_days[today_ts][address["queue_code"]]
+        )
+
+        future_today = [
+            (s, e) for s, e in today_intervals
+            if e > current_minutes
+        ]
+
+        block += "Сьогодні:\n"
+
+        if future_today:
+            for s, e in future_today:
+                block += f"{format_time(s)}–{format_time(e)}\n"
         else:
-            block = f"{address['queue_name']}\n"
-            for start, end in result:
-                block += f"{format_time(start)}–{format_time(end)}\n"
+            block += "До кінця доби світло буде\n"
+
+        # -------- ЗАВТРА --------
+
+        if tomorrow_ts:
+            tomorrow_intervals = build_intervals(
+                all_days[tomorrow_ts][address["queue_code"]]
+            )
+
+            block += "\nЗавтра:\n"
+
+            if tomorrow_intervals:
+                for s, e in tomorrow_intervals:
+                    block += f"{format_time(s)}–{format_time(e)}\n"
+            else:
+                block += "До кінця доби світло буде\n"
 
         message_blocks.append(block.strip())
 
