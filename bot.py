@@ -46,6 +46,11 @@ def send_message(text):
 
 # ---------------- HELPERS ----------------
 
+def format_time(minutes):
+    h = minutes // 60
+    m = minutes % 60
+    return f"{h:02d}:{m:02d}"
+
 def build_intervals(fact_data):
     intervals = []
     current = None
@@ -88,12 +93,6 @@ def build_intervals(fact_data):
         intervals.append(current)
 
     return intervals
-
-
-def format_time(minutes):
-    h = minutes // 60
-    m = minutes % 60
-    return f"{h:02d}:{m:02d}"
 
 # ---------------- MAIN ----------------
 
@@ -147,11 +146,20 @@ def main():
 
     intervals = build_intervals(fact_data)
 
-    if not intervals:
+    now = datetime.now(KYIV_TZ)
+    current_minutes = now.hour * 60 + now.minute
+
+    # залишаємо тільки ті інтервали, які ще не завершилися
+    future_intervals = [
+        (start, end) for start, end in intervals
+        if end > current_minutes
+    ]
+
+    if not future_intervals:
         message = f"{QUEUE_NAME}\nДо кінця доби світло буде"
     else:
         message = f"{QUEUE_NAME}\nСвітла не буде:\n"
-        for start, end in intervals:
+        for start, end in future_intervals:
             message += f"{format_time(start)}–{format_time(end)}\n"
 
     new_hash = hashlib.md5(message.encode()).hexdigest()
