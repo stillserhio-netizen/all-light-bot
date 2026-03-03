@@ -51,8 +51,7 @@ def build_intervals(fact_data):
     current = None
 
     for hour in range(1, 25):
-        h = str(hour)
-        status = fact_data.get(h)
+        status = fact_data.get(str(hour))
 
         if status in ["no", "first", "second"]:
 
@@ -144,13 +143,6 @@ def main():
     data = r2.json()
 
     today_timestamp = data["fact"]["today"]
-
-    # Переводимо timestamp в дату Києва
-    today_date = datetime.fromtimestamp(
-        today_timestamp,
-        tz=KYIV_TZ
-    ).date()
-
     fact_data = data["fact"]["data"][str(today_timestamp)][QUEUE]
 
     intervals = build_intervals(fact_data)
