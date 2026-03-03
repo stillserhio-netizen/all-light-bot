@@ -1,6 +1,7 @@
 import requests
 from datetime import datetime
 
+BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
 CITY = "м. Богуслав"
@@ -9,10 +10,15 @@ STREET = "вул. Теліги Олени"
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "X-Requested-With": "XMLHttpRequest",
-    "Referer": "https://www.dtek-krem.com.ua/ua/shutdowns"
+    "Referer": BASE_URL
 }
 
 def main():
+    session = requests.Session()
+
+    # 1. Отримуємо cookies
+    session.get(BASE_URL, headers=HEADERS, timeout=20)
+
     now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
 
     payload = {
@@ -25,7 +31,7 @@ def main():
         "data[2][value]": now_str
     }
 
-    r = requests.post(
+    r = session.post(
         API_URL,
         data=payload,
         headers=HEADERS,
