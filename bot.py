@@ -20,6 +20,8 @@ CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
 
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
 # ---------------- STATE ----------------
 
 def load_state():
@@ -46,7 +48,7 @@ def send_message(text):
 
 def build_intervals(fact_data):
     intervals = []
-    current_start = None
+    current = None
 
     for hour in range(1, 25):
         h = str(hour)
@@ -54,7 +56,6 @@ def build_intervals(fact_data):
 
         if status in ["no", "first", "second"]:
 
-            # визначаємо початок години
             start_hour = hour - 1
             end_hour = hour
 
@@ -70,22 +71,22 @@ def build_intervals(fact_data):
                 block_start = start_hour * 60 + 30
                 block_end = end_hour * 60
 
-            if current_start is None:
-                current_start = [block_start, block_end]
+            if current is None:
+                current = [block_start, block_end]
             else:
-                if block_start == current_start[1]:
-                    current_start[1] = block_end
+                if block_start == current[1]:
+                    current[1] = block_end
                 else:
-                    intervals.append(current_start)
-                    current_start = [block_start, block_end]
+                    intervals.append(current)
+                    current = [block_start, block_end]
 
         else:
-            if current_start:
-                intervals.append(current_start)
-                current_start = None
+            if current:
+                intervals.append(current)
+                current = None
 
-    if current_start:
-        intervals.append(current_start)
+    if current:
+        intervals.append(current)
 
     return intervals
 
@@ -115,9 +116,7 @@ def main():
 
     csrf_token = csrf_match.group(1)
 
-    now_str = datetime.now(
-        ZoneInfo("Europe/Kyiv")
-    ).strftime("%H:%M %d.%m.%Y")
+    now_str = datetime.now(KYIV_TZ).strftime("%H:%M %d.%m.%Y")
 
     payload = {
         "method": "getHomeNum",
@@ -144,8 +143,15 @@ def main():
 
     data = r2.json()
 
-    today_key = str(data["fact"]["today"])
-    fact_data = data["fact"]["data"][today_key][QUEUE]
+    today_timestamp = data["fact"]["today"]
+
+    # Переводимо timestamp в дату Києва
+    today_date = datetime.fromtimestamp(
+        today_timestamp,
+        tz=KYIV_TZ
+    ).date()
+
+    fact_data = data["fact"]["data"][str(today_timestamp)][QUEUE]
 
     intervals = build_intervals(fact_data)
 
