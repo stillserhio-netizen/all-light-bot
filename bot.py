@@ -3,7 +3,7 @@ import hashlib
 import os
 
 # =========================
-# ТВОЇ ДАНІ
+# ДАНІ БОТА
 # =========================
 
 BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
@@ -27,12 +27,23 @@ QUEUES = [
 
 def get_csrf(session):
     r = session.get(BASE_URL + "/ua/shutdowns")
-    return r.text.split('name="csrf-token" content="')[1].split('"')[0]
+    if r.status_code != 200:
+        print("GET ERROR:", r.status_code)
+        return None
+
+    try:
+        return r.text.split('name="csrf-token" content="')[1].split('"')[0]
+    except:
+        print("CSRF not found")
+        return None
 
 
 def get_schedule():
     session = requests.Session()
+
     csrf = get_csrf(session)
+    if not csrf:
+        return None
 
     headers = {
         "x-csrf-token": csrf,
@@ -55,19 +66,29 @@ def get_schedule():
         print("POST ERROR:", r.status_code)
         return None
 
-    return r.json()
+    try:
+        return r.json()
+    except:
+        print("JSON parse error")
+        return None
 
 
 def build_intervals(data, queue_key):
-    today_key = str(data["today"])
-    day_schedule = data["fact"]["data"][today_key][queue_key]
-    time_map = data["preset"]["time_zone"]
+
+    try:
+        today_key = str(data["fact"]["today"])
+        day_schedule = data["fact"]["data"][today_key][queue_key]
+        time_map = data["preset"]["time_zone"]
+    except KeyError:
+        print("JSON structure changed")
+        return []
 
     intervals = []
     current_start = None
     current_end = None
 
     for hour in range(1, 25):
+
         status = day_schedule[str(hour)]
 
         if status in ["no", "first", "second"]:
@@ -108,6 +129,7 @@ def main():
 
     data = get_schedule()
     if not data:
+        print("No data received")
         return
 
     message = ""
@@ -115,14 +137,16 @@ def main():
     for queue in QUEUES:
 
         intervals = build_intervals(data, queue)
-        queue_name = data["preset"]["sch_names"][queue]
+
+        queue_name = data.get("preset", {}).get("sch_names", {}).get(queue, queue)
+
+        message += f"{queue_name}\n"
 
         if intervals:
-            message += f"{queue_name}\n"
             for interval in intervals:
                 message += f"🔴 {interval}\n"
         else:
-            message += f"{queue_name}\n🟢 Світло буде до кінця доби\n"
+            message += "🟢 Світло буде до кінця доби\n"
 
         message += "\n"
 
