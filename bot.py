@@ -76,11 +76,9 @@ def build_intervals(fact_data):
             if status == "no":
                 block_start = start_hour * 60
                 block_end = end_hour * 60
-
             elif status == "first":
                 block_start = start_hour * 60
                 block_end = start_hour * 60 + 30
-
             elif status == "second":
                 block_start = start_hour * 60 + 30
                 block_end = end_hour * 60
@@ -106,50 +104,54 @@ def build_intervals(fact_data):
 
 # ---------------- REQUEST ----------------
 
-def get_queue_data(city, street, queue_code):
+def get_queue_data(city, street):
 
-    session = requests.Session()
+    try:
+        session = requests.Session()
 
-    r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
-    if r1.status_code != 200:
+        r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
+        if r1.status_code != 200:
+            return None
+
+        csrf_match = re.search(
+            r'name="csrf-token" content="(.+?)"',
+            r1.text
+        )
+
+        if not csrf_match:
+            return None
+
+        csrf_token = csrf_match.group(1)
+
+        now_str = datetime.now(KYIV_TZ).strftime("%H:%M %d.%m.%Y")
+
+        payload = {
+            "method": "getHomeNum",
+            "data[0][name]": "city",
+            "data[0][value]": city,
+            "data[1][name]": "street",
+            "data[1][value]": street,
+            "data[2][name]": "updateFact",
+            "data[2][value]": now_str
+        }
+
+        headers_post = {
+            "User-Agent": "Mozilla/5.0",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": BASE_URL,
+            "Origin": "https://www.dtek-krem.com.ua",
+            "X-CSRF-Token": csrf_token
+        }
+
+        r2 = session.post(API_URL, data=payload, headers=headers_post)
+
+        if r2.status_code != 200:
+            return None
+
+        return r2.json()
+
+    except:
         return None
-
-    csrf_match = re.search(
-        r'name="csrf-token" content="(.+?)"',
-        r1.text
-    )
-
-    if not csrf_match:
-        return None
-
-    csrf_token = csrf_match.group(1)
-
-    now_str = datetime.now(KYIV_TZ).strftime("%H:%M %d.%m.%Y")
-
-    payload = {
-        "method": "getHomeNum",
-        "data[0][name]": "city",
-        "data[0][value]": city,
-        "data[1][name]": "street",
-        "data[1][value]": street,
-        "data[2][name]": "updateFact",
-        "data[2][value]": now_str
-    }
-
-    headers_post = {
-        "User-Agent": "Mozilla/5.0",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": BASE_URL,
-        "Origin": "https://www.dtek-krem.com.ua",
-        "X-CSRF-Token": csrf_token
-    }
-
-    r2 = session.post(API_URL, data=payload, headers=headers_post)
-
-    if r2.status_code != 200:
-        return None
-
-    return r2.json()
 
 # ---------------- MAIN ----------------
 
@@ -161,24 +163,21 @@ def main():
 
     for address in ADDRESSES:
 
-        data = get_queue_data(
-            address["city"],
-            address["street"],
-            address["queue_code"]
-        )
+        block = f"{address['queue_name']}\n"
 
+        data = get_queue_data(address["city"], address["street"])
         time.sleep(3)
 
         if not data:
+            block += "Помилка отримання даних"
+            message_blocks.append(block)
             continue
 
         all_days = data["fact"]["data"]
-        timestamps = sorted(all_days.keys())
+        timestamps = sorted(all_days.keys(), key=int)
 
         today_ts = timestamps[0]
         tomorrow_ts = timestamps[1] if len(timestamps) > 1 else None
-
-        block = f"{address['queue_name']}\n"
 
         # -------- СЬОГОДНІ --------
 
@@ -215,9 +214,6 @@ def main():
                 block += "До кінця доби світло буде\n"
 
         message_blocks.append(block.strip())
-
-    if not message_blocks:
-        return
 
     final_message = "\n\n".join(message_blocks)
 
