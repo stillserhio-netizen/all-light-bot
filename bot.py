@@ -2,10 +2,6 @@ import requests
 import hashlib
 import os
 
-# =========================
-# ДАНІ БОТА
-# =========================
-
 BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
 
@@ -23,26 +19,21 @@ QUEUES = [
     "GPV6.1", "GPV6.2"
 ]
 
-# =========================
-
-def get_csrf(session):
-    r = session.get(BASE_URL + "/ua/shutdowns")
-    if r.status_code != 200:
-        print("GET ERROR:", r.status_code)
-        return None
-
-    try:
-        return r.text.split('name="csrf-token" content="')[1].split('"')[0]
-    except:
-        print("CSRF not found")
-        return None
-
 
 def get_schedule():
     session = requests.Session()
 
-    csrf = get_csrf(session)
+    # 1️⃣ Заходимо на сторінку щоб отримати cookies
+    r = session.get(BASE_URL + "/ua/shutdowns")
+    if r.status_code != 200:
+        print("GET ERROR")
+        return None
+
+    # 2️⃣ Беремо csrf з cookies
+    csrf = session.cookies.get("_csrf-dtek-krem")
+
     if not csrf:
+        print("CSRF cookie not found")
         return None
 
     headers = {
@@ -63,32 +54,23 @@ def get_schedule():
     r = session.post(AJAX_URL, data=payload, headers=headers)
 
     if r.status_code != 200:
-        print("POST ERROR:", r.status_code)
+        print("POST ERROR")
         return None
 
-    try:
-        return r.json()
-    except:
-        print("JSON parse error")
-        return None
+    return r.json()
 
 
 def build_intervals(data, queue_key):
 
-    try:
-        today_key = str(data["fact"]["today"])
-        day_schedule = data["fact"]["data"][today_key][queue_key]
-        time_map = data["preset"]["time_zone"]
-    except KeyError:
-        print("JSON structure changed")
-        return []
+    today_key = str(data["fact"]["today"])
+    day_schedule = data["fact"]["data"][today_key][queue_key]
+    time_map = data["preset"]["time_zone"]
 
     intervals = []
     current_start = None
     current_end = None
 
     for hour in range(1, 25):
-
         status = day_schedule[str(hour)]
 
         if status in ["no", "first", "second"]:
@@ -129,7 +111,7 @@ def main():
 
     data = get_schedule()
     if not data:
-        print("No data received")
+        print("No data")
         return
 
     message = ""
@@ -137,8 +119,7 @@ def main():
     for queue in QUEUES:
 
         intervals = build_intervals(data, queue)
-
-        queue_name = data.get("preset", {}).get("sch_names", {}).get(queue, queue)
+        queue_name = data["preset"]["sch_names"][queue]
 
         message += f"{queue_name}\n"
 
@@ -154,9 +135,6 @@ def main():
 
     new_hash = hashlib.md5(message.encode()).hexdigest()
     old_hash = load_state()
-
-    print("Old:", old_hash)
-    print("New:", new_hash)
 
     if new_hash != old_hash:
         send_message(message)
