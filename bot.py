@@ -14,7 +14,6 @@ AJAX_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
 STATE_FILE = "state.txt"
 
-# Всі черги
 QUEUES = [
     "GPV1.1", "GPV1.2",
     "GPV2.1", "GPV2.2",
@@ -60,7 +59,6 @@ def get_schedule():
 
 
 def build_intervals(data, queue_key):
-
     today_key = str(data["today"])
     day_schedule = data["fact"]["data"][today_key][queue_key]
     time_map = data["preset"]["time_zone"]
@@ -112,7 +110,7 @@ def main():
     if not data:
         return
 
-    message = "Графік відключень (Богуслав)\n\n"
+    message = ""
 
     for queue in QUEUES:
 
@@ -121,11 +119,14 @@ def main():
 
         if intervals:
             message += f"{queue_name}\n"
-            message += "Світла не буде:\n"
-            message += "\n".join(intervals)
-            message += "\n\n"
+            for interval in intervals:
+                message += f"🔴 {interval}\n"
         else:
-            message += f"{queue_name}\nДо кінця доби світло буде\n\n"
+            message += f"{queue_name}\n🟢 Світло буде до кінця доби\n"
+
+        message += "\n"
+
+    message = message.strip()
 
     new_hash = hashlib.md5(message.encode()).hexdigest()
     old_hash = load_state()
