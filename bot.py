@@ -25,4 +25,15 @@ def main():
         "data[2][value]": now_str
     }
 
-    r = requests.post(API_URL, data=payload, headers
+    r = requests.post(
+        API_URL,
+        data=payload,
+        headers=HEADERS,
+        timeout=20
+    )
+
+    print("STATUS:", r.status_code)
+    print("TEXT:", r.text)
+
+if __name__ == "__main__":
+    main()
