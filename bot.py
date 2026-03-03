@@ -5,8 +5,6 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# ---------------- CONFIG ----------------
-
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
@@ -14,7 +12,6 @@ BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
-
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 ADDRESSES = [
@@ -32,8 +29,6 @@ ADDRESSES = [
     }
 ]
 
-# ---------------- STATE ----------------
-
 def load_state():
     try:
         with open(STATE_FILE, "r") as f:
@@ -45,21 +40,12 @@ def save_state(value):
     with open(STATE_FILE, "w") as f:
         f.write(value)
 
-# ---------------- TELEGRAM ----------------
-
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": text
-    })
-
-# ---------------- HELPERS ----------------
+    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
 
 def format_time(minutes):
-    h = minutes // 60
-    m = minutes % 60
-    return f"{h:02d}:{m:02d}"
+    return f"{minutes//60:02d}:{minutes%60:02d}"
 
 def build_intervals(fact_data):
     intervals = []
@@ -69,29 +55,20 @@ def build_intervals(fact_data):
         status = fact_data.get(str(hour))
 
         if status in ["no", "first", "second"]:
+            start = (hour - 1) * 60
+            end = hour * 60
 
-            start_hour = hour - 1
-            end_hour = hour
-
-            if status == "no":
-                block_start = start_hour * 60
-                block_end = end_hour * 60
-            elif status == "first":
-                block_start = start_hour * 60
-                block_end = start_hour * 60 + 30
+            if status == "first":
+                end = start + 30
             elif status == "second":
-                block_start = start_hour * 60 + 30
-                block_end = end_hour * 60
+                start += 30
 
-            if current is None:
-                current = [block_start, block_end]
+            if current and start == current[1]:
+                current[1] = end
             else:
-                if block_start == current[1]:
-                    current[1] = block_end
-                else:
+                if current:
                     intervals.append(current)
-                    current = [block_start, block_end]
-
+                current = [start, end]
         else:
             if current:
                 intervals.append(current)
@@ -102,75 +79,56 @@ def build_intervals(fact_data):
 
     return intervals
 
-# ---------------- REQUEST ----------------
+def main():
 
-def get_queue_data(city, street):
+    now = datetime.now(KYIV_TZ)
+    current_minutes = now.hour * 60 + now.minute
 
-    try:
-        session = requests.Session()
+    session = requests.Session()
 
-        r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
-        if r1.status_code != 200:
-            return None
+    # ОДИН GET
+    r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
+    if r1.status_code != 200:
+        return
 
-        csrf_match = re.search(
-            r'name="csrf-token" content="(.+?)"',
-            r1.text
-        )
+    csrf_match = re.search(r'name="csrf-token" content="(.+?)"', r1.text)
+    if not csrf_match:
+        return
 
-        if not csrf_match:
-            return None
+    csrf_token = csrf_match.group(1)
 
-        csrf_token = csrf_match.group(1)
+    headers_post = {
+        "User-Agent": "Mozilla/5.0",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": BASE_URL,
+        "Origin": "https://www.dtek-krem.com.ua",
+        "X-CSRF-Token": csrf_token
+    }
 
-        now_str = datetime.now(KYIV_TZ).strftime("%H:%M %d.%m.%Y")
+    message_blocks = []
+
+    for address in ADDRESSES:
 
         payload = {
             "method": "getHomeNum",
             "data[0][name]": "city",
-            "data[0][value]": city,
+            "data[0][value]": address["city"],
             "data[1][name]": "street",
-            "data[1][value]": street,
+            "data[1][value]": address["street"],
             "data[2][name]": "updateFact",
-            "data[2][value]": now_str
-        }
-
-        headers_post = {
-            "User-Agent": "Mozilla/5.0",
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": BASE_URL,
-            "Origin": "https://www.dtek-krem.com.ua",
-            "X-CSRF-Token": csrf_token
+            "data[2][value]": now.strftime("%H:%M %d.%m.%Y")
         }
 
         r2 = session.post(API_URL, data=payload, headers=headers_post)
 
         if r2.status_code != 200:
-            return None
+            message_blocks.append(f"{address['queue_name']}\nПомилка запиту")
+            continue
 
-        return r2.json()
+        data = r2.json()
 
-    except:
-        return None
-
-# ---------------- MAIN ----------------
-
-def main():
-
-    message_blocks = []
-    now = datetime.now(KYIV_TZ)
-    current_minutes = now.hour * 60 + now.minute
-
-    for address in ADDRESSES:
-
-        block = f"{address['queue_name']}\n"
-
-        data = get_queue_data(address["city"], address["street"])
-        time.sleep(3)
-
-        if not data:
-            block += "Помилка отримання даних"
-            message_blocks.append(block)
+        if "fact" not in data:
+            message_blocks.append(f"{address['queue_name']}\nАдресу не знайдено")
             continue
 
         all_days = data["fact"]["data"]
@@ -179,15 +137,15 @@ def main():
         today_ts = timestamps[0]
         tomorrow_ts = timestamps[1] if len(timestamps) > 1 else None
 
-        # -------- СЬОГОДНІ --------
+        block = f"{address['queue_name']}\n"
 
+        # ---- СЬОГОДНІ ----
         today_intervals = build_intervals(
             all_days[today_ts][address["queue_code"]]
         )
 
         future_today = [
-            (s, e) for s, e in today_intervals
-            if e > current_minutes
+            (s, e) for s, e in today_intervals if e > current_minutes
         ]
 
         block += "Сьогодні:\n"
@@ -198,8 +156,7 @@ def main():
         else:
             block += "До кінця доби світло буде\n"
 
-        # -------- ЗАВТРА --------
-
+        # ---- ЗАВТРА ----
         if tomorrow_ts:
             tomorrow_intervals = build_intervals(
                 all_days[tomorrow_ts][address["queue_code"]]
@@ -215,16 +172,16 @@ def main():
 
         message_blocks.append(block.strip())
 
+        time.sleep(2)  # невелика пауза між адресами
+
     final_message = "\n\n".join(message_blocks)
 
     new_hash = hashlib.md5(final_message.encode()).hexdigest()
     old_hash = load_state()
 
-    if new_hash == old_hash:
-        return
-
-    save_state(new_hash)
-    send_message(final_message)
+    if new_hash != old_hash:
+        save_state(new_hash)
+        send_message(final_message)
 
 if __name__ == "__main__":
     main()
