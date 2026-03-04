@@ -9,8 +9,8 @@ from PIL import Image, ImageDraw, ImageFont
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
-BOT_TOKEN = "YOUR_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
+BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
+CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
@@ -45,9 +45,7 @@ def save_state(value):
 
 
 def send_photo(path):
-
     with open(path, "rb") as f:
-
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
             data={"chat_id": CHAT_ID},
@@ -55,100 +53,69 @@ def send_photo(path):
         )
 
 
-def build_intervals(fact_data):
+def get_color(status):
 
-    intervals = []
-    current = None
+    if status == "yes":
+        return (120, 200, 120)
 
-    for hour in range(1, 25):
+    if status in ["no", "first", "second"]:
+        return (230, 70, 70)
 
-        status = fact_data.get(str(hour))
+    if status in ["maybe", "mfirst", "msecond"]:
+        return (240, 200, 80)
 
-        if status in ["no", "first", "second"]:
-
-            start = (hour - 1) * 60
-            end = hour * 60
-
-            if status == "first":
-                end = start + 30
-
-            elif status == "second":
-                start += 30
-
-            if current and start == current[1]:
-
-                current[1] = end
-
-            else:
-
-                if current:
-                    intervals.append(current)
-
-                current = [start, end]
-
-        else:
-
-            if current:
-                intervals.append(current)
-                current = None
-
-    if current:
-        intervals.append(current)
-
-    return intervals
+    return (200, 200, 200)
 
 
-def draw_graph(results):
+def draw_table(results):
 
-    width = 1000
-    height = 120 + 120 * len(results)
+    cell_w = 40
+    cell_h = 40
+
+    width = 200 + cell_w * 24
+    height = 120 + cell_h * len(results)
 
     img = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(img)
 
     try:
-        font = ImageFont.truetype("DejaVuSans.ttf", 24)
+        font = ImageFont.truetype("DejaVuSans.ttf", 18)
     except:
         font = ImageFont.load_default()
 
-    px_per_min = (width - 200) / 1440
+    # години
+    for h in range(24):
+
+        x = 200 + h * cell_w
+
+        draw.text(
+            (x + 10, 40),
+            str(h),
+            fill="black",
+            font=font
+        )
 
     y = 80
 
-    for name, intervals in results:
+    for queue_name, fact in results:
 
-        draw.text((40, y - 40), name, fill="black", font=font)
+        draw.text((20, y + 10), queue_name, fill="black", font=font)
 
-        # фон
-        draw.rectangle(
-            (160, y, width - 40, y + 40),
-            fill=(200, 230, 200)
-        )
+        for hour in range(1, 25):
 
-        # відключення
-        for start, end in intervals:
+            status = fact.get(str(hour), "yes")
 
-            x1 = 160 + start * px_per_min
-            x2 = 160 + end * px_per_min
+            color = get_color(status)
+
+            x = 200 + (hour - 1) * cell_w
 
             draw.rectangle(
-                (x1, y, x2, y + 40),
-                fill=(220, 60, 60)
+                (x, y, x + cell_w, y + cell_h),
+                fill=color,
+                outline="black"
             )
 
-        # години
-        for h in range(0, 25, 2):
-
-            x = 160 + (h * 60) * px_per_min
-
-            draw.text(
-                (x - 10, y + 50),
-                str(h),
-                fill="black",
-                font=font
-            )
-
-        y += 120
+        y += cell_h
 
     img.save("schedule.png")
 
@@ -211,23 +178,20 @@ def main():
 
         today_ts = timestamps[0]
 
-        intervals = build_intervals(
-            all_days[today_ts][address["queue_code"]]
-        )
+        fact = all_days[today_ts][address["queue_code"]]
 
-        results.append((address["queue_name"], intervals))
+        results.append((address["queue_name"], fact))
 
         time.sleep(2)
 
-    graph_file = draw_graph(results)
+    graph_file = draw_table(results)
 
-    data_hash = hashlib.md5(open(graph_file, "rb").read()).hexdigest()
-
+    new_hash = hashlib.md5(open(graph_file, "rb").read()).hexdigest()
     old_hash = load_state()
 
-    if data_hash != old_hash:
+    if new_hash != old_hash:
 
-        save_state(data_hash)
+        save_state(new_hash)
 
         send_photo(graph_file)
 
