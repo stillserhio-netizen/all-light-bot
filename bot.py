@@ -4,12 +4,13 @@ import hashlib
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from PIL import Image, ImageDraw, ImageFont
 
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
-BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
-CHAT_ID = "-1003802691352"
+BOT_TOKEN = "YOUR_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 
 STATE_FILE = "state.txt"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
@@ -43,13 +44,15 @@ def save_state(value):
         f.write(value)
 
 
-def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
+def send_photo(path):
 
+    with open(path, "rb") as f:
 
-def format_time(minutes):
-    return f"{minutes//60:02d}:{minutes%60:02d}"
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+            data={"chat_id": CHAT_ID},
+            files={"photo": f}
+        )
 
 
 def build_intervals(fact_data):
@@ -95,14 +98,66 @@ def build_intervals(fact_data):
     return intervals
 
 
+def draw_graph(results):
+
+    width = 1000
+    height = 120 + 120 * len(results)
+
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 24)
+    except:
+        font = ImageFont.load_default()
+
+    px_per_min = (width - 200) / 1440
+
+    y = 80
+
+    for name, intervals in results:
+
+        draw.text((40, y - 40), name, fill="black", font=font)
+
+        # фон
+        draw.rectangle(
+            (160, y, width - 40, y + 40),
+            fill=(200, 230, 200)
+        )
+
+        # відключення
+        for start, end in intervals:
+
+            x1 = 160 + start * px_per_min
+            x2 = 160 + end * px_per_min
+
+            draw.rectangle(
+                (x1, y, x2, y + 40),
+                fill=(220, 60, 60)
+            )
+
+        # години
+        for h in range(0, 25, 2):
+
+            x = 160 + (h * 60) * px_per_min
+
+            draw.text(
+                (x - 10, y + 50),
+                str(h),
+                fill="black",
+                font=font
+            )
+
+        y += 120
+
+    img.save("schedule.png")
+
+    return "schedule.png"
+
+
 def main():
 
-    now = datetime.now(KYIV_TZ)
-    current_minutes = now.hour * 60 + now.minute
-
     session = requests.Session()
-
-    # -------- GET CSRF --------
 
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
 
@@ -124,7 +179,9 @@ def main():
         "X-CSRF-Token": csrf_token
     }
 
-    message_blocks = []
+    results = []
+
+    now = datetime.now(KYIV_TZ)
 
     for address in ADDRESSES:
 
@@ -141,13 +198,11 @@ def main():
         r2 = session.post(API_URL, data=payload, headers=headers_post)
 
         if r2.status_code != 200:
-            message_blocks.append(f"{address['queue_name']}\nПомилка запиту")
             continue
 
         data = r2.json()
 
         if "fact" not in data:
-            message_blocks.append(f"{address['queue_name']}\nАдресу не знайдено")
             continue
 
         all_days = data["fact"]["data"]
@@ -156,58 +211,25 @@ def main():
 
         today_ts = timestamps[0]
 
-        tomorrow_ts = timestamps[1] if len(timestamps) > 1 else None
-
-        block = f"{address['queue_name']}\n"
-
-        # -------- СЬОГОДНІ --------
-
-        today_intervals = build_intervals(
+        intervals = build_intervals(
             all_days[today_ts][address["queue_code"]]
         )
 
-        future_today = [
-            (s, e) for s, e in today_intervals if e > current_minutes
-        ]
-
-        block += "Сьогодні:\n"
-
-        if future_today:
-
-            for s, e in future_today:
-                block += f"{format_time(s)}–{format_time(e)}\n"
-
-        else:
-
-            block += "До кінця доби світло буде\n"
-
-        # -------- ЗАВТРА (тільки якщо є відключення) --------
-
-        if tomorrow_ts:
-
-            tomorrow_intervals = build_intervals(
-                all_days[tomorrow_ts][address["queue_code"]]
-            )
-
-            if tomorrow_intervals:
-
-                block += "\nЗавтра:\n"
-
-                for s, e in tomorrow_intervals:
-                    block += f"{format_time(s)}–{format_time(e)}\n"
-
-        message_blocks.append(block.strip())
+        results.append((address["queue_name"], intervals))
 
         time.sleep(2)
 
-    final_message = "\n\n".join(message_blocks)
+    graph_file = draw_graph(results)
 
-    new_hash = hashlib.md5(final_message.encode()).hexdigest()
+    data_hash = hashlib.md5(open(graph_file, "rb").read()).hexdigest()
+
     old_hash = load_state()
 
-    if new_hash != old_hash:
-        save_state(new_hash)
-        send_message(final_message)
+    if data_hash != old_hash:
+
+        save_state(data_hash)
+
+        send_photo(graph_file)
 
 
 if __name__ == "__main__":
