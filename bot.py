@@ -35,13 +35,16 @@ ADDRESSES = [
 ]
 
 
-def send_photo(path):
+def send_photo(path, caption):
 
     with open(path, "rb") as f:
 
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-            data={"chat_id": CHAT_ID},
+            data={
+                "chat_id": CHAT_ID,
+                "caption": caption
+            },
             files={"photo": f}
         )
 
@@ -59,6 +62,52 @@ def save_state(value):
 
     with open(STATE_FILE, "w") as f:
         f.write(value)
+
+
+def format_time(minutes):
+
+    h = minutes // 60
+    m = minutes % 60
+
+    return f"{h:02d}:{m:02d}"
+
+
+def build_intervals(fact_data):
+
+    intervals = []
+    current = None
+
+    for hour in range(1, 25):
+
+        status = fact_data.get(str(hour))
+
+        if status in ["no", "first", "second"]:
+
+            start = (hour - 1) * 60
+            end = hour * 60
+
+            if status == "first":
+                end = start + 30
+
+            elif status == "second":
+                start += 30
+
+            if current and start == current[1]:
+                current[1] = end
+            else:
+                if current:
+                    intervals.append(current)
+                current = [start, end]
+
+        else:
+            if current:
+                intervals.append(current)
+                current = None
+
+    if current:
+        intervals.append(current)
+
+    return intervals
 
 
 def get_color(status):
@@ -95,12 +144,7 @@ def draw_table(results):
 
         x = 200 + h * cell_w
 
-        draw.text(
-            (x + 10, 40),
-            str(h),
-            fill="black",
-            font=font
-        )
+        draw.text((x + 10, 40), str(h), fill="black", font=font)
 
     y = 80
 
@@ -136,12 +180,12 @@ def check_schedule():
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
 
     if r1.status_code != 200:
-        return None
+        return None, None
 
     csrf_match = re.search(r'name="csrf-token" content="(.+?)"', r1.text)
 
     if not csrf_match:
-        return None
+        return None, None
 
     csrf_token = csrf_match.group(1)
 
@@ -153,9 +197,12 @@ def check_schedule():
         "X-CSRF-Token": csrf_token
     }
 
+    now = datetime.now(KYIV_TZ)
+
+    message_blocks = []
     results = []
 
-    now = datetime.now(KYIV_TZ)
+    current_minutes = now.hour * 60 + now.minute
 
     for address in ADDRESSES:
 
@@ -187,14 +234,29 @@ def check_schedule():
 
         fact = all_days[today_ts][address["queue_code"]]
 
+        intervals = build_intervals(fact)
+
+        future = [(s, e) for s, e in intervals if e > current_minutes]
+
+        block = f"{address['queue_name']}\n"
+
+        if future:
+            for s, e in future:
+                block += f"{format_time(s)}–{format_time(e)}\n"
+        else:
+            block += "До кінця доби світло буде\n"
+
+        message_blocks.append(block.strip())
+
         results.append((address["queue_name"], fact))
 
         time.sleep(2)
 
-    if not results:
-        return None
+    text_message = "\n\n".join(message_blocks)
 
-    return draw_table(results)
+    graph = draw_table(results)
+
+    return graph, text_message
 
 
 def main():
@@ -205,22 +267,21 @@ def main():
 
         try:
 
-            graph_file = check_schedule()
+            graph_file, text_message = check_schedule()
 
             if graph_file is None:
-                print("NO DATA")
                 time.sleep(900)
                 continue
 
-            new_hash = hashlib.md5(open(graph_file, "rb").read()).hexdigest()
+            new_hash = hashlib.md5(text_message.encode()).hexdigest()
 
             old_hash = load_state()
 
             if old_hash is None:
 
-                print("FIRST RUN - SEND")
+                print("FIRST RUN SEND")
 
-                send_photo(graph_file)
+                send_photo(graph_file, text_message)
 
                 save_state(new_hash)
 
@@ -228,7 +289,7 @@ def main():
 
                 print("GRAPH CHANGED")
 
-                send_photo(graph_file)
+                send_photo(graph_file, text_message)
 
                 save_state(new_hash)
 
