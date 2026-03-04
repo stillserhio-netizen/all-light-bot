@@ -2,9 +2,11 @@ import requests
 import re
 import hashlib
 import time
+import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont
+
 
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
@@ -13,7 +15,9 @@ BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
+
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
 
 ADDRESSES = [
     {
@@ -31,26 +35,30 @@ ADDRESSES = [
 ]
 
 
-def load_state():
-    try:
-        with open(STATE_FILE, "r") as f:
-            return f.read().strip()
-    except:
-        return None
-
-
-def save_state(value):
-    with open(STATE_FILE, "w") as f:
-        f.write(value)
-
-
 def send_photo(path):
+
     with open(path, "rb") as f:
+
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
             data={"chat_id": CHAT_ID},
             files={"photo": f}
         )
+
+
+def load_state():
+
+    if not os.path.exists(STATE_FILE):
+        return None
+
+    with open(STATE_FILE, "r") as f:
+        return f.read().strip()
+
+
+def save_state(value):
+
+    with open(STATE_FILE, "w") as f:
+        f.write(value)
 
 
 def get_color(status):
@@ -83,7 +91,6 @@ def draw_table(results):
     except:
         font = ImageFont.load_default()
 
-    # години
     for h in range(24):
 
         x = 200 + h * cell_w
@@ -122,19 +129,19 @@ def draw_table(results):
     return "schedule.png"
 
 
-def main():
+def check_schedule():
 
     session = requests.Session()
 
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
 
     if r1.status_code != 200:
-        return
+        return None
 
     csrf_match = re.search(r'name="csrf-token" content="(.+?)"', r1.text)
 
     if not csrf_match:
-        return
+        return None
 
     csrf_token = csrf_match.group(1)
 
@@ -184,16 +191,58 @@ def main():
 
         time.sleep(2)
 
-    graph_file = draw_table(results)
+    if not results:
+        return None
 
-    new_hash = hashlib.md5(open(graph_file, "rb").read()).hexdigest()
-    old_hash = load_state()
+    return draw_table(results)
 
-    if new_hash != old_hash:
 
-        save_state(new_hash)
+def main():
 
-        send_photo(graph_file)
+    print("BOT STARTED")
+
+    while True:
+
+        try:
+
+            graph_file = check_schedule()
+
+            if graph_file is None:
+                print("NO DATA")
+                time.sleep(900)
+                continue
+
+            new_hash = hashlib.md5(open(graph_file, "rb").read()).hexdigest()
+
+            old_hash = load_state()
+
+            if old_hash is None:
+
+                print("FIRST RUN - SEND")
+
+                send_photo(graph_file)
+
+                save_state(new_hash)
+
+            elif new_hash != old_hash:
+
+                print("GRAPH CHANGED")
+
+                send_photo(graph_file)
+
+                save_state(new_hash)
+
+            else:
+
+                print("NO CHANGES")
+
+        except Exception as e:
+
+            print("ERROR:", e)
+
+        print("SLEEP 15 MIN")
+
+        time.sleep(900)
 
 
 if __name__ == "__main__":
