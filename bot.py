@@ -29,6 +29,7 @@ ADDRESSES = [
     }
 ]
 
+
 def load_state():
     try:
         with open(STATE_FILE, "r") as f:
@@ -36,40 +37,54 @@ def load_state():
     except:
         return None
 
+
 def save_state(value):
     with open(STATE_FILE, "w") as f:
         f.write(value)
+
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": text})
 
+
 def format_time(minutes):
     return f"{minutes//60:02d}:{minutes%60:02d}"
 
+
 def build_intervals(fact_data):
+
     intervals = []
     current = None
 
     for hour in range(1, 25):
+
         status = fact_data.get(str(hour))
 
         if status in ["no", "first", "second"]:
+
             start = (hour - 1) * 60
             end = hour * 60
 
             if status == "first":
                 end = start + 30
+
             elif status == "second":
                 start += 30
 
             if current and start == current[1]:
+
                 current[1] = end
+
             else:
+
                 if current:
                     intervals.append(current)
+
                 current = [start, end]
+
         else:
+
             if current:
                 intervals.append(current)
                 current = None
@@ -79,6 +94,7 @@ def build_intervals(fact_data):
 
     return intervals
 
+
 def main():
 
     now = datetime.now(KYIV_TZ)
@@ -86,12 +102,15 @@ def main():
 
     session = requests.Session()
 
-    # ОДИН GET
+    # -------- GET CSRF --------
+
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
+
     if r1.status_code != 200:
         return
 
     csrf_match = re.search(r'name="csrf-token" content="(.+?)"', r1.text)
+
     if not csrf_match:
         return
 
@@ -132,14 +151,17 @@ def main():
             continue
 
         all_days = data["fact"]["data"]
+
         timestamps = sorted(all_days.keys(), key=int)
 
         today_ts = timestamps[0]
+
         tomorrow_ts = timestamps[1] if len(timestamps) > 1 else None
 
         block = f"{address['queue_name']}\n"
 
-        # ---- СЬОГОДНІ ----
+        # -------- СЬОГОДНІ --------
+
         today_intervals = build_intervals(
             all_days[today_ts][address["queue_code"]]
         )
@@ -151,28 +173,32 @@ def main():
         block += "Сьогодні:\n"
 
         if future_today:
+
             for s, e in future_today:
                 block += f"{format_time(s)}–{format_time(e)}\n"
+
         else:
+
             block += "До кінця доби світло буде\n"
 
-        # ---- ЗАВТРА ----
+        # -------- ЗАВТРА (тільки якщо є відключення) --------
+
         if tomorrow_ts:
+
             tomorrow_intervals = build_intervals(
                 all_days[tomorrow_ts][address["queue_code"]]
             )
 
-            block += "\nЗавтра:\n"
-
             if tomorrow_intervals:
+
+                block += "\nЗавтра:\n"
+
                 for s, e in tomorrow_intervals:
                     block += f"{format_time(s)}–{format_time(e)}\n"
-            else:
-                block += "До кінця доби світло буде\n"
 
         message_blocks.append(block.strip())
 
-        time.sleep(2)  # невелика пауза між адресами
+        time.sleep(2)
 
     final_message = "\n\n".join(message_blocks)
 
@@ -182,6 +208,7 @@ def main():
     if new_hash != old_hash:
         save_state(new_hash)
         send_message(final_message)
+
 
 if __name__ == "__main__":
     main()
