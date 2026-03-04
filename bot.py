@@ -261,49 +261,26 @@ def check_schedule():
 
 def main():
 
-    print("BOT STARTED")
+    graph_file, text_message = check_schedule()
 
-    while True:
+    if graph_file is None:
+        return
 
-        try:
+    new_hash = hashlib.md5(text_message.encode()).hexdigest()
 
-            graph_file, text_message = check_schedule()
+    old_hash = load_state()
 
-            if graph_file is None:
-                time.sleep(900)
-                continue
+    if old_hash is None:
 
-            new_hash = hashlib.md5(text_message.encode()).hexdigest()
+        send_photo(graph_file, text_message)
 
-            old_hash = load_state()
+        save_state(new_hash)
 
-            if old_hash is None:
+    elif new_hash != old_hash:
 
-                print("FIRST RUN SEND")
+        send_photo(graph_file, text_message)
 
-                send_photo(graph_file, text_message)
-
-                save_state(new_hash)
-
-            elif new_hash != old_hash:
-
-                print("GRAPH CHANGED")
-
-                send_photo(graph_file, text_message)
-
-                save_state(new_hash)
-
-            else:
-
-                print("NO CHANGES")
-
-        except Exception as e:
-
-            print("ERROR:", e)
-
-        print("SLEEP 15 MIN")
-
-        time.sleep(900)
+        save_state(new_hash)
 
 
 if __name__ == "__main__":
