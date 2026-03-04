@@ -124,12 +124,12 @@ def check_schedule():
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
 
     if r1.status_code != 200:
-        return None, None, None
+        return None, None
 
     csrf_match = re.search(r'name="csrf-token" content="(.+?)"', r1.text)
 
     if not csrf_match:
-        return None, None, None
+        return None, None
 
     csrf_token = csrf_match.group(1)
 
@@ -205,7 +205,10 @@ def check_schedule():
 
         time.sleep(2)
 
-    return "\n\n".join(message_blocks), "\n\n".join(power_states)
+    schedule_text = "\n\n".join(message_blocks)
+    power_state = "\n\n".join(power_states)
+
+    return schedule_text, power_state
 
 
 def main():
@@ -216,7 +219,6 @@ def main():
         return
 
     schedule_hash = hashlib.md5(schedule_text.encode()).hexdigest()
-
     power_hash = hashlib.md5(power_state.encode()).hexdigest()
 
     old_schedule = load_state(STATE_FILE)
@@ -225,13 +227,11 @@ def main():
     if old_schedule is None:
 
         send_message(schedule_text)
-
         save_state(STATE_FILE, schedule_hash)
 
     elif schedule_hash != old_schedule:
 
         send_message("📊 Оновлено графік\n\n" + schedule_text)
-
         save_state(STATE_FILE, schedule_hash)
 
     if old_power is None:
@@ -241,7 +241,6 @@ def main():
     elif power_hash != old_power:
 
         send_message(power_state)
-
         save_state(POWER_STATE_FILE, power_hash)
 
 
