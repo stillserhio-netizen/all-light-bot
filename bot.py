@@ -5,7 +5,6 @@ import time
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from PIL import Image, ImageDraw, ImageFont
 
 
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
@@ -15,6 +14,7 @@ BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
+POWER_STATE_FILE = "power_state.txt"
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
@@ -35,32 +35,29 @@ ADDRESSES = [
 ]
 
 
-def send_photo(path, caption):
+def send_message(text):
 
-    with open(path, "rb") as f:
-
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-            data={
-                "chat_id": CHAT_ID,
-                "caption": caption
-            },
-            files={"photo": f}
-        )
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data={
+            "chat_id": CHAT_ID,
+            "text": text
+        }
+    )
 
 
-def load_state():
+def load_state(path):
 
-    if not os.path.exists(STATE_FILE):
+    if not os.path.exists(path):
         return None
 
-    with open(STATE_FILE, "r") as f:
+    with open(path, "r") as f:
         return f.read().strip()
 
 
-def save_state(value):
+def save_state(path, value):
 
-    with open(STATE_FILE, "w") as f:
+    with open(path, "w") as f:
         f.write(value)
 
 
@@ -110,67 +107,14 @@ def build_intervals(fact_data):
     return intervals
 
 
-def get_color(status):
+def is_power_off(now_minutes, intervals):
 
-    if status == "yes":
-        return (120, 200, 120)
+    for s, e in intervals:
 
-    if status in ["no", "first", "second"]:
-        return (230, 70, 70)
+        if s <= now_minutes < e:
+            return True, s, e
 
-    if status in ["maybe", "mfirst", "msecond"]:
-        return (240, 200, 80)
-
-    return (200, 200, 200)
-
-
-def draw_table(results):
-
-    cell_w = 40
-    cell_h = 40
-
-    width = 200 + cell_w * 24
-    height = 120 + cell_h * len(results)
-
-    img = Image.new("RGB", (width, height), "white")
-    draw = ImageDraw.Draw(img)
-
-    try:
-        font = ImageFont.truetype("DejaVuSans.ttf", 18)
-    except:
-        font = ImageFont.load_default()
-
-    for h in range(24):
-
-        x = 200 + h * cell_w
-
-        draw.text((x + 10, 40), str(h), fill="black", font=font)
-
-    y = 80
-
-    for queue_name, fact in results:
-
-        draw.text((20, y + 10), queue_name, fill="black", font=font)
-
-        for hour in range(1, 25):
-
-            status = fact.get(str(hour), "yes")
-
-            color = get_color(status)
-
-            x = 200 + (hour - 1) * cell_w
-
-            draw.rectangle(
-                (x, y, x + cell_w, y + cell_h),
-                fill=color,
-                outline="black"
-            )
-
-        y += cell_h
-
-    img.save("schedule.png")
-
-    return "schedule.png"
+    return False, None, None
 
 
 def check_schedule():
@@ -180,12 +124,12 @@ def check_schedule():
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
 
     if r1.status_code != 200:
-        return None, None
+        return None, None, None
 
     csrf_match = re.search(r'name="csrf-token" content="(.+?)"', r1.text)
 
     if not csrf_match:
-        return None, None
+        return None, None, None
 
     csrf_token = csrf_match.group(1)
 
@@ -199,10 +143,10 @@ def check_schedule():
 
     now = datetime.now(KYIV_TZ)
 
-    message_blocks = []
-    results = []
+    now_minutes = now.hour * 60 + now.minute
 
-    current_minutes = now.hour * 60 + now.minute
+    message_blocks = []
+    power_states = []
 
     for address in ADDRESSES:
 
@@ -236,7 +180,7 @@ def check_schedule():
 
         intervals = build_intervals(fact)
 
-        future = [(s, e) for s, e in intervals if e > current_minutes]
+        future = [(s, e) for s, e in intervals if e > now_minutes]
 
         block = f"{address['queue_name']}\n"
 
@@ -248,39 +192,57 @@ def check_schedule():
 
         message_blocks.append(block.strip())
 
-        results.append((address["queue_name"], fact))
+        off, s, e = is_power_off(now_minutes, intervals)
+
+        if off:
+            power_states.append(
+                f"🔴 {address['queue_name']}\nПочалося відключення\n{format_time(s)}–{format_time(e)}"
+            )
+        else:
+            power_states.append(
+                f"🟢 {address['queue_name']}\nСвітло є"
+            )
 
         time.sleep(2)
 
-    text_message = "\n\n".join(message_blocks)
-
-    graph = draw_table(results)
-
-    return graph, text_message
+    return "\n\n".join(message_blocks), "\n\n".join(power_states)
 
 
 def main():
 
-    graph_file, text_message = check_schedule()
+    schedule_text, power_state = check_schedule()
 
-    if graph_file is None:
+    if schedule_text is None:
         return
 
-    new_hash = hashlib.md5(text_message.encode()).hexdigest()
+    schedule_hash = hashlib.md5(schedule_text.encode()).hexdigest()
 
-    old_hash = load_state()
+    power_hash = hashlib.md5(power_state.encode()).hexdigest()
 
-    if old_hash is None:
+    old_schedule = load_state(STATE_FILE)
+    old_power = load_state(POWER_STATE_FILE)
 
-        send_photo(graph_file, text_message)
+    if old_schedule is None:
 
-        save_state(new_hash)
+        send_message(schedule_text)
 
-    elif new_hash != old_hash:
+        save_state(STATE_FILE, schedule_hash)
 
-        send_photo(graph_file, text_message)
+    elif schedule_hash != old_schedule:
 
-        save_state(new_hash)
+        send_message("📊 Оновлено графік\n\n" + schedule_text)
+
+        save_state(STATE_FILE, schedule_hash)
+
+    if old_power is None:
+
+        save_state(POWER_STATE_FILE, power_hash)
+
+    elif power_hash != old_power:
+
+        send_message(power_state)
+
+        save_state(POWER_STATE_FILE, power_hash)
 
 
 if __name__ == "__main__":
