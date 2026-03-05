@@ -7,6 +7,7 @@ import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
@@ -16,6 +17,7 @@ CHAT_ID = "-1003802691352"
 STATE_FILE = "state.txt"
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
 
 ADDRESSES = [
     {
@@ -115,6 +117,19 @@ def build_intervals(fact_data):
     return intervals
 
 
+def get_csrf(html):
+
+    csrf_match = re.search(r'csrf-token" content="([^"]+)"', html)
+
+    if not csrf_match:
+        csrf_match = re.search(r'content="([^"]+)" name="csrf-token"', html)
+
+    if not csrf_match:
+        return None
+
+    return csrf_match.group(1)
+
+
 def main():
 
     print("BOT START")
@@ -128,13 +143,13 @@ def main():
     if r1.status_code != 200:
         return
 
-    csrf_match = re.search(r'name="csrf-token" content="(.+?)"', r1.text)
+    csrf_token = get_csrf(r1.text)
 
-    if not csrf_match:
+    if not csrf_token:
         print("CSRF TOKEN NOT FOUND")
         return
 
-    csrf_token = csrf_match.group(1)
+    print("CSRF TOKEN FOUND")
 
     headers_post = {
         "User-Agent": "Mozilla/5.0",
@@ -185,9 +200,8 @@ def main():
 
         block = f"{address['queue_name']}\n"
 
-        # -------- сьогодні --------
-
         fact_today = all_days[today_ts][address["queue_code"]]
+
         intervals_today = build_intervals(fact_today)
 
         future = [(s, e) for s, e in intervals_today if e > now_minutes]
@@ -200,11 +214,10 @@ def main():
         else:
             block += "До кінця доби світло буде\n"
 
-        # -------- завтра --------
-
         if tomorrow_ts:
 
             fact_tomorrow = all_days[tomorrow_ts][address["queue_code"]]
+
             intervals_tomorrow = build_intervals(fact_tomorrow)
 
             if intervals_tomorrow:
