@@ -185,6 +185,8 @@ def main():
 
         block = f"{address['queue_name']}\n"
 
+        # -------- сьогодні --------
+
         fact_today = all_days[today_ts][address["queue_code"]]
         intervals_today = build_intervals(fact_today)
 
@@ -198,18 +200,19 @@ def main():
         else:
             block += "До кінця доби світло буде\n"
 
+        # -------- завтра --------
+
         if tomorrow_ts:
 
             fact_tomorrow = all_days[tomorrow_ts][address["queue_code"]]
             intervals_tomorrow = build_intervals(fact_tomorrow)
 
-            block += "\nЗавтра:\n"
-
             if intervals_tomorrow:
+
+                block += "\nЗавтра:\n"
+
                 for s, e in intervals_tomorrow:
                     block += f"{format_time(s)}–{format_time(e)}\n"
-            else:
-                block += "До кінця доби світло буде\n"
 
         message_blocks.append(block.strip())
 
@@ -230,7 +233,7 @@ def main():
 
         print("SENDING MESSAGE")
 
-        send_message("📊 Оновлено графік\n\n" + final_message)
+        send_message(f"📊 Оновлено графік\n\n{final_message}")
 
         save_state(new_hash)
 
