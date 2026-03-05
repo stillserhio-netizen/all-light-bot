@@ -36,13 +36,17 @@ ADDRESSES = [
 def send_message(text):
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text}
+        data={
+            "chat_id": CHAT_ID,
+            "text": text
+        }
     )
 
 
 def load_state():
     if not os.path.exists(STATE_FILE):
         return None
+
     with open(STATE_FILE, "r") as f:
         return f.read().strip()
 
@@ -82,6 +86,7 @@ def build_intervals(fact_data):
 
             if status == "first":
                 end = start + 30
+
             elif status == "second":
                 start += 30
 
@@ -154,21 +159,41 @@ def main():
 
         all_days = data["fact"]["data"]
         timestamps = sorted(all_days.keys(), key=int)
+
         today_ts = timestamps[0]
-
-        fact = all_days[today_ts][address["queue_code"]]
-
-        intervals = build_intervals(fact)
-
-        future = [(s, e) for s, e in intervals if e > now_minutes]
+        tomorrow_ts = timestamps[1] if len(timestamps) > 1 else None
 
         block = f"{address['queue_name']}\n"
+
+        # -------- сьогодні --------
+
+        fact_today = all_days[today_ts][address["queue_code"]]
+        intervals_today = build_intervals(fact_today)
+
+        future = [(s, e) for s, e in intervals_today if e > now_minutes]
+
+        block += "Сьогодні:\n"
 
         if future:
             for s, e in future:
                 block += f"{format_time(s)}–{format_time(e)}\n"
         else:
             block += "До кінця доби світло буде\n"
+
+        # -------- завтра --------
+
+        if tomorrow_ts:
+
+            fact_tomorrow = all_days[tomorrow_ts][address["queue_code"]]
+            intervals_tomorrow = build_intervals(fact_tomorrow)
+
+            block += "\nЗавтра:\n"
+
+            if intervals_tomorrow:
+                for s, e in intervals_tomorrow:
+                    block += f"{format_time(s)}–{format_time(e)}\n"
+            else:
+                block += "До кінця доби світло буде\n"
 
         message_blocks.append(block.strip())
 
