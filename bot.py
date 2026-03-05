@@ -3,9 +3,9 @@ import re
 import hashlib
 import time
 import os
+import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
 
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
@@ -14,10 +14,8 @@ BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
-POWER_STATE_FILE = "power_state.txt"
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
-
 
 ADDRESSES = [
     {
@@ -36,37 +34,36 @@ ADDRESSES = [
 
 
 def send_message(text):
-
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={
-            "chat_id": CHAT_ID,
-            "text": text
-        }
+        data={"chat_id": CHAT_ID, "text": text}
     )
 
 
-def load_state(path):
-
-    if not os.path.exists(path):
+def load_state():
+    if not os.path.exists(STATE_FILE):
         return None
-
-    with open(path, "r") as f:
+    with open(STATE_FILE, "r") as f:
         return f.read().strip()
 
 
-def save_state(path, value):
-
-    with open(path, "w") as f:
+def save_state(value):
+    with open(STATE_FILE, "w") as f:
         f.write(value)
 
 
+def commit_state():
+
+    subprocess.run(["git", "config", "--global", "user.name", "bot"])
+    subprocess.run(["git", "config", "--global", "user.email", "bot@github"])
+
+    subprocess.run(["git", "add", STATE_FILE])
+    subprocess.run(["git", "commit", "-m", "update state"], check=False)
+    subprocess.run(["git", "push"], check=False)
+
+
 def format_time(minutes):
-
-    h = minutes // 60
-    m = minutes % 60
-
-    return f"{h:02d}:{m:02d}"
+    return f"{minutes//60:02d}:{minutes%60:02d}"
 
 
 def build_intervals(fact_data):
@@ -85,7 +82,6 @@ def build_intervals(fact_data):
 
             if status == "first":
                 end = start + 30
-
             elif status == "second":
                 start += 30
 
@@ -107,29 +103,17 @@ def build_intervals(fact_data):
     return intervals
 
 
-def is_power_off(now_minutes, intervals):
-
-    for s, e in intervals:
-
-        if s <= now_minutes < e:
-            return True, s, e
-
-    return False, None, None
-
-
-def check_schedule():
+def main():
 
     session = requests.Session()
 
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
-
     if r1.status_code != 200:
-        return None, None
+        return
 
     csrf_match = re.search(r'name="csrf-token" content="(.+?)"', r1.text)
-
     if not csrf_match:
-        return None, None
+        return
 
     csrf_token = csrf_match.group(1)
 
@@ -142,11 +126,9 @@ def check_schedule():
     }
 
     now = datetime.now(KYIV_TZ)
-
     now_minutes = now.hour * 60 + now.minute
 
     message_blocks = []
-    power_states = []
 
     for address in ADDRESSES:
 
@@ -171,9 +153,7 @@ def check_schedule():
             continue
 
         all_days = data["fact"]["data"]
-
         timestamps = sorted(all_days.keys(), key=int)
-
         today_ts = timestamps[0]
 
         fact = all_days[today_ts][address["queue_code"]]
@@ -192,56 +172,20 @@ def check_schedule():
 
         message_blocks.append(block.strip())
 
-        off, s, e = is_power_off(now_minutes, intervals)
-
-        if off:
-            power_states.append(
-                f"🔴 {address['queue_name']}\nПочалося відключення\n{format_time(s)}–{format_time(e)}"
-            )
-        else:
-            power_states.append(
-                f"🟢 {address['queue_name']}\nСвітло є"
-            )
-
         time.sleep(2)
 
-    schedule_text = "\n\n".join(message_blocks)
-    power_state = "\n\n".join(power_states)
+    final_message = "\n\n".join(message_blocks)
 
-    return schedule_text, power_state
+    new_hash = hashlib.md5(final_message.encode()).hexdigest()
+    old_hash = load_state()
 
+    if new_hash != old_hash:
 
-def main():
+        send_message("📊 Оновлено графік\n\n" + final_message)
 
-    schedule_text, power_state = check_schedule()
+        save_state(new_hash)
 
-    if schedule_text is None:
-        return
-
-    schedule_hash = hashlib.md5(schedule_text.encode()).hexdigest()
-    power_hash = hashlib.md5(power_state.encode()).hexdigest()
-
-    old_schedule = load_state(STATE_FILE)
-    old_power = load_state(POWER_STATE_FILE)
-
-    if old_schedule is None:
-
-        send_message(schedule_text)
-        save_state(STATE_FILE, schedule_hash)
-
-    elif schedule_hash != old_schedule:
-
-        send_message("📊 Оновлено графік\n\n" + schedule_text)
-        save_state(STATE_FILE, schedule_hash)
-
-    if old_power is None:
-
-        save_state(POWER_STATE_FILE, power_hash)
-
-    elif power_hash != old_power:
-
-        send_message(power_state)
-        save_state(POWER_STATE_FILE, power_hash)
+        commit_state()
 
 
 if __name__ == "__main__":
