@@ -34,7 +34,8 @@ ADDRESSES = [
 
 
 def send_message(text):
-    requests.post(
+
+    r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={
             "chat_id": CHAT_ID,
@@ -42,8 +43,12 @@ def send_message(text):
         }
     )
 
+    print("TELEGRAM STATUS:", r.status_code)
+    print("TELEGRAM RESPONSE:", r.text)
+
 
 def load_state():
+
     if not os.path.exists(STATE_FILE):
         return None
 
@@ -52,6 +57,7 @@ def load_state():
 
 
 def save_state(value):
+
     with open(STATE_FILE, "w") as f:
         f.write(value)
 
@@ -67,6 +73,7 @@ def commit_state():
 
 
 def format_time(minutes):
+
     return f"{minutes//60:02d}:{minutes%60:02d}"
 
 
@@ -110,14 +117,21 @@ def build_intervals(fact_data):
 
 def main():
 
+    print("BOT START")
+
     session = requests.Session()
 
     r1 = session.get(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
+
+    print("GET STATUS:", r1.status_code)
+
     if r1.status_code != 200:
         return
 
     csrf_match = re.search(r'name="csrf-token" content="(.+?)"', r1.text)
+
     if not csrf_match:
+        print("CSRF TOKEN NOT FOUND")
         return
 
     csrf_token = csrf_match.group(1)
@@ -137,6 +151,8 @@ def main():
 
     for address in ADDRESSES:
 
+        print("CHECK ADDRESS:", address["queue_name"])
+
         payload = {
             "method": "getHomeNum",
             "data[0][name]": "city",
@@ -149,23 +165,25 @@ def main():
 
         r2 = session.post(API_URL, data=payload, headers=headers_post)
 
+        print("POST STATUS:", r2.status_code)
+
         if r2.status_code != 200:
             continue
 
         data = r2.json()
 
         if "fact" not in data:
+            print("FACT NOT FOUND")
             continue
 
         all_days = data["fact"]["data"]
+
         timestamps = sorted(all_days.keys(), key=int)
 
         today_ts = timestamps[0]
         tomorrow_ts = timestamps[1] if len(timestamps) > 1 else None
 
         block = f"{address['queue_name']}\n"
-
-        # -------- сьогодні --------
 
         fact_today = all_days[today_ts][address["queue_code"]]
         intervals_today = build_intervals(fact_today)
@@ -179,8 +197,6 @@ def main():
                 block += f"{format_time(s)}–{format_time(e)}\n"
         else:
             block += "До кінця доби світло буде\n"
-
-        # -------- завтра --------
 
         if tomorrow_ts:
 
@@ -201,16 +217,28 @@ def main():
 
     final_message = "\n\n".join(message_blocks)
 
+    print("FINAL MESSAGE:")
+    print(final_message)
+
     new_hash = hashlib.md5(final_message.encode()).hexdigest()
     old_hash = load_state()
 
-    if new_hash != old_hash:
+    print("OLD HASH:", old_hash)
+    print("NEW HASH:", new_hash)
+
+    if old_hash is None or new_hash != old_hash:
+
+        print("SENDING MESSAGE")
 
         send_message("📊 Оновлено графік\n\n" + final_message)
 
         save_state(new_hash)
 
         commit_state()
+
+    else:
+
+        print("NO CHANGES")
 
 
 if __name__ == "__main__":
