@@ -22,23 +22,23 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 ADDRESSES = [
 
-{"city":"с. Карапиші","street":"вул. Молодіжна","queue_code":"GPV1.1","queue_name":"Черга 1.1"},
-{"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"Черга 1.2"},
+    {"city":"с. Карапиші","street":"вул. Молодіжна","queue_code":"GPV1.1","queue_name":"Черга 1.1"},
+    {"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"Черга 1.2"},
 
-{"city":"м. Біла Церква","street":"вул. Гончара Олеся","queue_code":"GPV2.1","queue_name":"Черга 2.1"},
-{"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"Черга 2.2"},
+    {"city":"м. Біла Церква","street":"вул. Гончара Олеся","queue_code":"GPV2.1","queue_name":"Черга 2.1"},
+    {"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"Черга 2.2"},
 
-{"city":"м. Миронівка","street":"вул. Шевченка","queue_code":"GPV3.1","queue_name":"Черга 3.1"},
-{"city":"м. Миронівка","street":"вул. Зеленого Мирона","queue_code":"GPV3.2","queue_name":"Черга 3.2"},
+    {"city":"м. Миронівка","street":"вул. Шевченка","queue_code":"GPV3.1","queue_name":"Черга 3.1"},
+    {"city":"м. Миронівка","street":"вул. Зеленого Мирона","queue_code":"GPV3.2","queue_name":"Черга 3.2"},
 
-{"city":"м. Біла Церква","street":"вул. Рибна","queue_code":"GPV4.1","queue_name":"Черга 4.1"},
-{"city":"м. Біла Церква","street":"вул. Шевченка","queue_code":"GPV4.2","queue_name":"Черга 4.2"},
+    {"city":"м. Біла Церква","street":"вул. Рибна","queue_code":"GPV4.1","queue_name":"Черга 4.1"},
+    {"city":"м. Біла Церква","street":"вул. Шевченка","queue_code":"GPV4.2","queue_name":"Черга 4.2"},
 
-{"city":"м. Біла Церква","street":"вул. Героїв Небесної сотні","queue_code":"GPV5.1","queue_name":"Черга 5.1"},
-{"city":"м. Біла Церква","street":"вул. Глибочицька","queue_code":"GPV5.2","queue_name":"Черга 5.2"},
+    {"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"Черга 5.1"},
+    {"city":"м. Біла Церква","street":"вул. Глибочицька","queue_code":"GPV5.2","queue_name":"Черга 5.2"},
 
-{"city":"м. Біла Церква","street":"вул. Сухоярська","queue_code":"GPV6.1","queue_name":"Черга 6.1"},
-{"city":"м. Вишневе","street":"вул. Гоголя","queue_code":"GPV6.2","queue_name":"Черга 6.2"}
+    {"city":"м. Біла Церква","street":"вул. Сухоярська","queue_code":"GPV6.1","queue_name":"Черга 6.1"},
+    {"city":"м. Вишневе","street":"вул. Гоголя","queue_code":"GPV6.2","queue_name":"Черга 6.2"}
 
 ]
 
