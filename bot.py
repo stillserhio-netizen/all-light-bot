@@ -4,6 +4,7 @@ import hashlib
 import time
 import os
 import subprocess
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -58,10 +59,10 @@ def load_state():
         return f.read().strip()
 
 
-def save_state(v):
+def save_state(value):
 
     with open(STATE_FILE,"w") as f:
-        f.write(v)
+        f.write(value)
 
 
 def load_reminders():
@@ -73,10 +74,10 @@ def load_reminders():
         return set(f.read().splitlines())
 
 
-def save_reminder(r):
+def save_reminder(key):
 
     with open(REMINDER_FILE,"a") as f:
-        f.write(r+"\n")
+        f.write(key+"\n")
 
 
 def commit_state():
@@ -89,28 +90,29 @@ def commit_state():
     subprocess.run(["git","push"],check=False)
 
 
-def format_time(m):
+def format_time(minutes):
 
-    return f"{m//60:02d}:{m%60:02d}"
+    return f"{minutes//60:02d}:{minutes%60:02d}"
 
 
-def build_intervals(data):
+def build_intervals(fact_data):
 
     intervals=[]
     current=None
 
-    for h in range(1,25):
+    for hour in range(1,25):
 
-        s=data.get(str(h))
+        status=fact_data.get(str(hour))
 
-        if s in ["no","first","second"]:
+        if status in ["no","first","second"]:
 
-            start=(h-1)*60
-            end=h*60
+            start=(hour-1)*60
+            end=hour*60
 
-            if s=="first":
+            if status=="first":
                 end=start+30
-            elif s=="second":
+
+            elif status=="second":
                 start+=30
 
             if current and start==current[1]:
@@ -151,20 +153,20 @@ def main():
 
     session=requests.Session()
 
-    r=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
+    r1=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
 
-    if r.status_code!=200:
+    if r1.status_code!=200:
         print("GET ERROR")
         return
 
-    csrf=get_csrf(r.text)
+    csrf=get_csrf(r1.text)
 
     if not csrf:
         print("CSRF ERROR")
         return
 
 
-    headers={
+    headers_post={
         "User-Agent":"Mozilla/5.0",
         "X-Requested-With":"XMLHttpRequest",
         "Referer":BASE_URL,
@@ -174,26 +176,26 @@ def main():
 
 
     now=datetime.now(KYIV_TZ)
-    now_min=now.hour*60+now.minute
+    now_minutes=now.hour*60+now.minute
 
 
     off_groups={}
     reminder_groups={}
 
 
-    for a in ADDRESSES:
+    for address in ADDRESSES:
 
         payload={
             "method":"getHomeNum",
             "data[0][name]":"city",
-            "data[0][value]":a["city"],
+            "data[0][value]":address["city"],
             "data[1][name]":"street",
-            "data[1][value]":a["street"],
+            "data[1][value]":address["street"],
             "data[2][name]":"updateFact",
             "data[2][value]":now.strftime("%H:%M %d.%m.%Y")
         }
 
-        r2=session.post(API_URL,data=payload,headers=headers)
+        r2=session.post(API_URL,data=payload,headers=headers_post)
 
         if r2.status_code!=200:
             continue
@@ -205,53 +207,55 @@ def main():
 
         all_days=data["fact"]["data"]
 
-        ts=sorted(all_days.keys(),key=int)[0]
+        today_ts=min(all_days.keys(),key=int)
 
-        fact=all_days[ts][a["queue_code"]]
+        fact_today=all_days[today_ts][address["queue_code"]]
 
-        intervals=build_intervals(fact)
+        intervals=build_intervals(fact_today)
 
-        future=[(s,e) for s,e in intervals if e>now_min]
+        future=[(s,e) for s,e in intervals if e>now_minutes]
 
 
         for s,e in future:
 
             key=f"{s}-{e}"
 
-            off_groups.setdefault(key,[]).append(a["queue_name"])
+            off_groups.setdefault(key,[]).append(address["queue_name"])
 
 
-            diff=s-now_min
+            diff=s-now_minutes
 
             if 55<=diff<=65:
 
-                reminder_groups.setdefault(key,[]).append(a["queue_name"])
+                reminder_groups.setdefault(key,[]).append(address["queue_name"])
 
 
         time.sleep(1)
 
 
-    off_text=[]
+    off_lines=[]
 
-    for k,qs in off_groups.items():
+    for k,queues in off_groups.items():
 
         s,e=map(int,k.split("-"))
 
-        off_text.append(
-            f"Черга {', '.join(qs)} — {format_time(s)}–{format_time(e)}"
+        off_lines.append(
+            f"Черга {', '.join(queues)} — {format_time(s)}–{format_time(e)}"
         )
 
 
-    if off_text:
+    if off_lines:
 
-        final="📊 Оновлено графік\n\n🔴 Відключення:\n"+ "\n".join(off_text)
+        final="📊 Оновлено графік\n\n🔴 Відключення:\n"+ "\n".join(off_lines)
 
     else:
 
-        final="📊 Оновлено графік\n\n🟢 До кінця доби світло є"
+        final="📊 Оновлено графік\n\n🟢 До кінця доби світло буде"
 
 
-    new_hash=hashlib.md5(final.encode()).hexdigest()
+    today_str=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+
+    new_hash=hashlib.md5((today_str+final).encode()).hexdigest()
     old_hash=load_state()
 
 
@@ -267,23 +271,23 @@ def main():
     reminders=load_reminders()
 
 
-    for k,qs in reminder_groups.items():
+    for k,queues in reminder_groups.items():
 
         s,e=map(int,k.split("-"))
 
-        rkey=f"{k}"
+        rkey=f"{today_str}_{k}"
 
         if rkey in reminders:
             continue
 
 
-        txt=(
+        text=(
             "⚠️ Через 1 годину відключення світла\n\n"
             f"🔴 {format_time(s)}–{format_time(e)}\n"
-            f"Черги: {', '.join(qs)}"
+            f"Черги: {', '.join(queues)}"
         )
 
-        send_message(txt)
+        send_message(text)
 
         save_reminder(rkey)
 
