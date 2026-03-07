@@ -22,33 +22,35 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 ADDRESSES = [
 
-    {"city":"с. Карапиші","street":"вул. Молодіжна","queue_code":"GPV1.1","queue_name":"Черга 1.1"},
-    {"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"Черга 1.2"},
+{"city":"с. Карапиші","street":"вул. Молодіжна","queue_code":"GPV1.1","queue_name":"Черга 1.1"},
+{"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"Черга 1.2"},
 
-    {"city":"м. Біла Церква","street":"вул. Гончара Олеся","queue_code":"GPV2.1","queue_name":"Черга 2.1"},
-    {"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"Черга 2.2"},
+{"city":"м. Біла Церква","street":"вул. Гончара Олеся","queue_code":"GPV2.1","queue_name":"Черга 2.1"},
+{"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"Черга 2.2"},
 
-    {"city":"м. Миронівка","street":"вул. Шевченка","queue_code":"GPV3.1","queue_name":"Черга 3.1"},
-    {"city":"м. Миронівка","street":"вул. Зеленого Мирона","queue_code":"GPV3.2","queue_name":"Черга 3.2"},
+{"city":"м. Миронівка","street":"вул. Шевченка","queue_code":"GPV3.1","queue_name":"Черга 3.1"},
+{"city":"м. Миронівка","street":"вул. Зеленого Мирона","queue_code":"GPV3.2","queue_name":"Черга 3.2"},
 
-    {"city":"м. Біла Церква","street":"вул. Рибна","queue_code":"GPV4.1","queue_name":"Черга 4.1"},
-    {"city":"м. Біла Церква","street":"вул. Шевченка","queue_code":"GPV4.2","queue_name":"Черга 4.2"},
+{"city":"м. Біла Церква","street":"вул. Рибна","queue_code":"GPV4.1","queue_name":"Черга 4.1"},
+{"city":"м. Біла Церква","street":"вул. Шевченка","queue_code":"GPV4.2","queue_name":"Черга 4.2"},
 
-    {"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"Черга 5.1"},
-    {"city":"м. Біла Церква","street":"вул. Глибочицька","queue_code":"GPV5.2","queue_name":"Черга 5.2"},
+{"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"Черга 5.1"},
+{"city":"м. Біла Церква","street":"вул. Глибочицька","queue_code":"GPV5.2","queue_name":"Черга 5.2"},
 
-    {"city":"м. Біла Церква","street":"вул. Сухоярська","queue_code":"GPV6.1","queue_name":"Черга 6.1"},
-    {"city":"м. Вишневе","street":"вул. Гоголя","queue_code":"GPV6.2","queue_name":"Черга 6.2"}
+{"city":"м. Біла Церква","street":"вул. Сухоярська","queue_code":"GPV6.1","queue_name":"Черга 6.1"},
+{"city":"м. Вишневе","street":"вул. Гоголя","queue_code":"GPV6.2","queue_name":"Черга 6.2"}
 
 ]
 
 
 def send_message(text):
 
-    requests.post(
+    r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID,"text": text}
+        data={"chat_id": CHAT_ID, "text": text}
     )
+
+    print("TELEGRAM STATUS:", r.status_code)
 
 
 def load_state():
@@ -79,6 +81,16 @@ def save_reminder(value):
 
     with open(REMINDER_FILE,"a") as f:
         f.write(value+"\n")
+
+
+def commit_state():
+
+    subprocess.run(["git","config","--global","user.name","bot"])
+    subprocess.run(["git","config","--global","user.email","bot@github"])
+
+    subprocess.run(["git","add",STATE_FILE],check=False)
+    subprocess.run(["git","commit","-m","update state"],check=False)
+    subprocess.run(["git","push"],check=False)
 
 
 def format_time(minutes):
@@ -139,6 +151,8 @@ def get_csrf(html):
 
 def main():
 
+    print("BOT START")
+
     session=requests.Session()
 
     r1=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
@@ -164,7 +178,7 @@ def main():
 
     reminders=load_reminders()
 
-    message_blocks=[]
+    off_blocks=[]
 
     for address in ADDRESSES:
 
@@ -200,13 +214,17 @@ def main():
 
         future=[(s,e) for s,e in intervals if e>now_minutes]
 
-        block=f"{address['queue_name']}\n"
-
         if future:
-            for s,e in future:
-                block+=f"{format_time(s)}–{format_time(e)}\n"
 
-                if 55 <= (s-now_minutes) <= 65:
+            for s,e in future:
+
+                off_blocks.append(
+                    f"{address['queue_name']} — {format_time(s)}–{format_time(e)}"
+                )
+
+                diff=s-now_minutes
+
+                if 55<=diff<=65:
 
                     key=f"{address['queue_code']}_{s}"
 
@@ -217,27 +235,41 @@ f"""⚠️ Через 1 годину відключення світла
 
 {address['queue_name']}
 🔴 {format_time(s)}–{format_time(e)}"""
-)
+                        )
 
                         save_reminder(key)
 
-        else:
-            block+="До кінця доби світло буде\n"
-
-        message_blocks.append(block.strip())
-
         time.sleep(0.5)
 
-    final_message="\n\n".join(message_blocks)
+
+    if off_blocks:
+
+        final_message=(
+            "📊 Оновлено графік\n\n"
+            "🔴 Відключення:\n"
+            + "\n".join(off_blocks) +
+            "\n\n🟢 Інші черги — світло є"
+        )
+
+    else:
+
+        final_message=(
+            "📊 Оновлено графік\n\n"
+            "🟢 До кінця доби світло буде"
+        )
+
 
     new_hash=hashlib.md5(final_message.encode()).hexdigest()
     old_hash=load_state()
 
+
     if old_hash is None or new_hash!=old_hash:
 
-        send_message(f"📊 Оновлено графік\n\n{final_message}")
+        send_message(final_message)
 
         save_state(new_hash)
+
+        commit_state()
 
 
 if __name__=="__main__":
