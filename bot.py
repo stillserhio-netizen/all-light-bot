@@ -3,7 +3,9 @@ import re
 import hashlib
 import time
 import os
-import subprocess
+import threading
+import http.server
+import socketserver
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -43,6 +45,30 @@ ADDRESSES = [
 ]
 
 
+# ================= HTTP SERVER =================
+
+class Handler(http.server.BaseHTTPRequestHandler):
+
+    def do_GET(self):
+
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+
+def keep_alive():
+
+    port = int(os.environ.get("PORT", 10000))
+
+    with socketserver.TCPServer(("", port), Handler) as httpd:
+
+        print("HTTP SERVER STARTED ON", port)
+
+        httpd.serve_forever()
+
+
+# ================= TELEGRAM =================
+
 def send_message(text):
 
     r = requests.post(
@@ -51,8 +77,9 @@ def send_message(text):
     )
 
     print("TELEGRAM STATUS:", r.status_code)
-    print("TELEGRAM RESPONSE:", r.text)
 
+
+# ================= FILES =================
 
 def load_state():
 
@@ -84,15 +111,7 @@ def save_reminder(value):
         f.write(value+"\n")
 
 
-def commit_state():
-
-    subprocess.run(["git","config","--global","user.name","bot"])
-    subprocess.run(["git","config","--global","user.email","bot@github"])
-
-    subprocess.run(["git","add",STATE_FILE],check=False)
-    subprocess.run(["git","commit","-m","update state"],check=False)
-    subprocess.run(["git","push"],check=False)
-
+# ================= HELPERS =================
 
 def format_time(minutes):
 
@@ -150,6 +169,8 @@ def get_csrf(html):
     return m.group(1)
 
 
+# ================= MAIN =================
+
 def main():
 
     print("BOT START")
@@ -161,12 +182,9 @@ def main():
     print("GET STATUS:",r1.status_code)
 
     if r1.status_code!=200:
-        print("GET FAILED")
         return
 
     csrf=get_csrf(r1.text)
-
-    print("CSRF:",csrf)
 
     if not csrf:
         print("CSRF NOT FOUND")
@@ -192,8 +210,6 @@ def main():
 
     for address in ADDRESSES:
 
-        print("CHECK ADDRESS:",address["queue_name"])
-
         payload={
             "method":"getHomeNum",
             "data[0][name]":"city",
@@ -206,15 +222,12 @@ def main():
 
         r2=session.post(API_URL,data=payload,headers=headers)
 
-        print("POST STATUS:",r2.status_code)
-
         if r2.status_code!=200:
             continue
 
         data=r2.json()
 
         if "fact" not in data:
-            print("FACT NOT FOUND")
             continue
 
         all_days=data["fact"]["data"]
@@ -274,31 +287,37 @@ f"""⚠️ Через 1 годину відключення світла
         )
 
 
-    print("FINAL MESSAGE:")
-    print(final_message)
-
-
     new_hash=hashlib.md5(final_message.encode()).hexdigest()
     old_hash=load_state()
 
-    print("OLD HASH:",old_hash)
-    print("NEW HASH:",new_hash)
-
-
     if old_hash is None or new_hash!=old_hash:
-
-        print("SENDING MESSAGE")
 
         send_message(final_message)
 
         save_state(new_hash)
 
-        commit_state()
 
-    else:
+# ================= LOOP =================
 
-        print("NO CHANGES")
+def runner():
+
+    while True:
+
+        try:
+
+            main()
+
+        except Exception as e:
+
+            print("ERROR:", e)
+
+        print("SLEEP 15 MIN")
+
+        time.sleep(900)
 
 
-if __name__=="__main__":
-    main()
+# ================= START =================
+
+threading.Thread(target=keep_alive).start()
+
+runner()
