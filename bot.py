@@ -51,6 +51,7 @@ def send_message(text):
     )
 
     print("TELEGRAM STATUS:", r.status_code)
+    print("TELEGRAM RESPONSE:", r.text)
 
 
 def load_state():
@@ -157,13 +158,20 @@ def main():
 
     r1=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
 
+    print("GET STATUS:",r1.status_code)
+
     if r1.status_code!=200:
+        print("GET FAILED")
         return
 
     csrf=get_csrf(r1.text)
 
+    print("CSRF:",csrf)
+
     if not csrf:
+        print("CSRF NOT FOUND")
         return
+
 
     headers={
         "User-Agent":"Mozilla/5.0",
@@ -173,6 +181,7 @@ def main():
         "X-CSRF-Token":csrf
     }
 
+
     now=datetime.now(KYIV_TZ)
     now_minutes=now.hour*60+now.minute
 
@@ -180,7 +189,10 @@ def main():
 
     off_blocks=[]
 
+
     for address in ADDRESSES:
+
+        print("CHECK ADDRESS:",address["queue_name"])
 
         payload={
             "method":"getHomeNum",
@@ -194,12 +206,15 @@ def main():
 
         r2=session.post(API_URL,data=payload,headers=headers)
 
+        print("POST STATUS:",r2.status_code)
+
         if r2.status_code!=200:
             continue
 
         data=r2.json()
 
         if "fact" not in data:
+            print("FACT NOT FOUND")
             continue
 
         all_days=data["fact"]["data"]
@@ -259,17 +274,30 @@ f"""⚠️ Через 1 годину відключення світла
         )
 
 
+    print("FINAL MESSAGE:")
+    print(final_message)
+
+
     new_hash=hashlib.md5(final_message.encode()).hexdigest()
     old_hash=load_state()
 
+    print("OLD HASH:",old_hash)
+    print("NEW HASH:",new_hash)
+
 
     if old_hash is None or new_hash!=old_hash:
+
+        print("SENDING MESSAGE")
 
         send_message(final_message)
 
         save_state(new_hash)
 
         commit_state()
+
+    else:
+
+        print("NO CHANGES")
 
 
 if __name__=="__main__":
