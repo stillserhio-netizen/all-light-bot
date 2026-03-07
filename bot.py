@@ -248,7 +248,7 @@ def main():
 
     else:
 
-        final="📊 Оновлено графік\n\n🟢 Світло є"
+        final="📊 Оновлено графік\n\n🟢 До кінця доби світло є"
 
 
     new_hash=hashlib.md5(final.encode()).hexdigest()
