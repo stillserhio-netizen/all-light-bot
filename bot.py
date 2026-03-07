@@ -3,9 +3,7 @@ import re
 import hashlib
 import time
 import os
-import threading
-import http.server
-import socketserver
+import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -24,62 +22,32 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 ADDRESSES = [
 
-{"city":"с. Карапиші","street":"вул. Молодіжна","queue_code":"GPV1.1","queue_name":"Черга 1.1"},
-{"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"Черга 1.2"},
-
-{"city":"м. Біла Церква","street":"вул. Гончара Олеся","queue_code":"GPV2.1","queue_name":"Черга 2.1"},
-{"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"Черга 2.2"},
-
-{"city":"м. Миронівка","street":"вул. Шевченка","queue_code":"GPV3.1","queue_name":"Черга 3.1"},
-{"city":"м. Миронівка","street":"вул. Зеленого Мирона","queue_code":"GPV3.2","queue_name":"Черга 3.2"},
-
-{"city":"м. Біла Церква","street":"вул. Рибна","queue_code":"GPV4.1","queue_name":"Черга 4.1"},
-{"city":"м. Біла Церква","street":"вул. Шевченка","queue_code":"GPV4.2","queue_name":"Черга 4.2"},
-
-{"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"Черга 5.1"},
-{"city":"м. Біла Церква","street":"вул. Глибочицька","queue_code":"GPV5.2","queue_name":"Черга 5.2"},
-
-{"city":"м. Біла Церква","street":"вул. Сухоярська","queue_code":"GPV6.1","queue_name":"Черга 6.1"},
-{"city":"м. Вишневе","street":"вул. Гоголя","queue_code":"GPV6.2","queue_name":"Черга 6.2"}
+    {"city":"с. Карапиші","street":"вул. Молодіжна 12","queue_code":"GPV1.1","queue_name":"1.1"},
+    {"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"1.2"},
+    {"city":"м. Біла Церква","street":"вул. Гончара Олеся 2","queue_code":"GPV2.1","queue_name":"2.1"},
+    {"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"2.2"},
+    {"city":"м. Миронівка","street":"вул. Шевченка 2","queue_code":"GPV3.1","queue_name":"3.1"},
+    {"city":"м. Миронівка","street":"вул. Зеленого Мирона 13","queue_code":"GPV3.2","queue_name":"3.2"},
+    {"city":"м. Біла Церква","street":"вул. Рибна 32","queue_code":"GPV4.1","queue_name":"4.1"},
+    {"city":"м. Біла Церква","street":"вул. Шевченка 4","queue_code":"GPV4.2","queue_name":"4.2"},
+    {"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"5.1"},
+    {"city":"м. Біла Церква","street":"вул. Глибочицька 18","queue_code":"GPV5.2","queue_name":"5.2"},
+    {"city":"м. Біла Церква","street":"вул. Сухоярська 4","queue_code":"GPV6.1","queue_name":"6.1"},
+    {"city":"м. Вишневе","street":"вул. Гоголя 2","queue_code":"GPV6.2","queue_name":"6.2"}
 
 ]
 
 
-# ================= HTTP SERVER =================
-
-class Handler(http.server.BaseHTTPRequestHandler):
-
-    def do_GET(self):
-
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-
-def keep_alive():
-
-    port = int(os.environ.get("PORT", 10000))
-
-    with socketserver.TCPServer(("", port), Handler) as httpd:
-
-        print("HTTP SERVER STARTED ON", port)
-
-        httpd.serve_forever()
-
-
-# ================= TELEGRAM =================
-
 def send_message(text):
 
-    r = requests.post(
+    requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text}
+        data={
+            "chat_id": CHAT_ID,
+            "text": text
+        }
     )
 
-    print("TELEGRAM STATUS:", r.status_code)
-
-
-# ================= FILES =================
 
 def load_state():
 
@@ -90,10 +58,10 @@ def load_state():
         return f.read().strip()
 
 
-def save_state(value):
+def save_state(v):
 
     with open(STATE_FILE,"w") as f:
-        f.write(value)
+        f.write(v)
 
 
 def load_reminders():
@@ -105,37 +73,44 @@ def load_reminders():
         return set(f.read().splitlines())
 
 
-def save_reminder(value):
+def save_reminder(r):
 
     with open(REMINDER_FILE,"a") as f:
-        f.write(value+"\n")
+        f.write(r+"\n")
 
 
-# ================= HELPERS =================
+def commit_state():
 
-def format_time(minutes):
+    subprocess.run(["git","config","--global","user.name","bot"])
+    subprocess.run(["git","config","--global","user.email","bot@github"])
 
-    return f"{minutes//60:02d}:{minutes%60:02d}"
+    subprocess.run(["git","add",STATE_FILE,REMINDER_FILE])
+    subprocess.run(["git","commit","-m","update"],check=False)
+    subprocess.run(["git","push"],check=False)
 
 
-def build_intervals(fact_data):
+def format_time(m):
+
+    return f"{m//60:02d}:{m%60:02d}"
+
+
+def build_intervals(data):
 
     intervals=[]
     current=None
 
-    for hour in range(1,25):
+    for h in range(1,25):
 
-        status=fact_data.get(str(hour))
+        s=data.get(str(h))
 
-        if status in ["no","first","second"]:
+        if s in ["no","first","second"]:
 
-            start=(hour-1)*60
-            end=hour*60
+            start=(h-1)*60
+            end=h*60
 
-            if status=="first":
+            if s=="first":
                 end=start+30
-
-            elif status=="second":
+            elif s=="second":
                 start+=30
 
             if current and start==current[1]:
@@ -146,6 +121,7 @@ def build_intervals(fact_data):
                 current=[start,end]
 
         else:
+
             if current:
                 intervals.append(current)
                 current=None
@@ -169,25 +145,22 @@ def get_csrf(html):
     return m.group(1)
 
 
-# ================= MAIN =================
-
 def main():
 
     print("BOT START")
 
     session=requests.Session()
 
-    r1=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
+    r=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
 
-    print("GET STATUS:",r1.status_code)
-
-    if r1.status_code!=200:
+    if r.status_code!=200:
+        print("GET ERROR")
         return
 
-    csrf=get_csrf(r1.text)
+    csrf=get_csrf(r.text)
 
     if not csrf:
-        print("CSRF NOT FOUND")
+        print("CSRF ERROR")
         return
 
 
@@ -201,21 +174,21 @@ def main():
 
 
     now=datetime.now(KYIV_TZ)
-    now_minutes=now.hour*60+now.minute
-
-    reminders=load_reminders()
-
-    off_blocks=[]
+    now_min=now.hour*60+now.minute
 
 
-    for address in ADDRESSES:
+    off_groups={}
+    reminder_groups={}
+
+
+    for a in ADDRESSES:
 
         payload={
             "method":"getHomeNum",
             "data[0][name]":"city",
-            "data[0][value]":address["city"],
+            "data[0][value]":a["city"],
             "data[1][name]":"street",
-            "data[1][value]":address["street"],
+            "data[1][value]":a["street"],
             "data[2][name]":"updateFact",
             "data[2][value]":now.strftime("%H:%M %d.%m.%Y")
         }
@@ -232,92 +205,90 @@ def main():
 
         all_days=data["fact"]["data"]
 
-        timestamps=sorted(all_days.keys(),key=int)
+        ts=sorted(all_days.keys(),key=int)[0]
 
-        today_ts=timestamps[0]
+        fact=all_days[ts][a["queue_code"]]
 
-        fact_today=all_days[today_ts][address["queue_code"]]
+        intervals=build_intervals(fact)
 
-        intervals=build_intervals(fact_today)
-
-        future=[(s,e) for s,e in intervals if e>now_minutes]
-
-        if future:
-
-            for s,e in future:
-
-                off_blocks.append(
-                    f"{address['queue_name']} — {format_time(s)}–{format_time(e)}"
-                )
-
-                diff=s-now_minutes
-
-                if 55<=diff<=65:
-
-                    key=f"{address['queue_code']}_{s}"
-
-                    if key not in reminders:
-
-                        send_message(
-f"""⚠️ Через 1 годину відключення світла
-
-{address['queue_name']}
-🔴 {format_time(s)}–{format_time(e)}"""
-                        )
-
-                        save_reminder(key)
-
-        time.sleep(0.5)
+        future=[(s,e) for s,e in intervals if e>now_min]
 
 
-    if off_blocks:
+        for s,e in future:
 
-        final_message=(
-            "📊 Оновлено графік\n\n"
-            "🔴 Відключення:\n"
-            + "\n".join(off_blocks) +
-            "\n\n🟢 Інші черги — світло є"
+            key=f"{s}-{e}"
+
+            off_groups.setdefault(key,[]).append(a["queue_name"])
+
+
+            diff=s-now_min
+
+            if 55<=diff<=65:
+
+                reminder_groups.setdefault(key,[]).append(a["queue_name"])
+
+
+        time.sleep(1)
+
+
+    off_text=[]
+
+    for k,qs in off_groups.items():
+
+        s,e=map(int,k.split("-"))
+
+        off_text.append(
+            f"Черга {', '.join(qs)} — {format_time(s)}–{format_time(e)}"
         )
+
+
+    if off_text:
+
+        final="📊 Оновлено графік\n\n🔴 Відключення:\n"+ "\n".join(off_text)
 
     else:
 
-        final_message=(
-            "📊 Оновлено графік\n\n"
-            "🟢 До кінця доби світло буде"
-        )
+        final="📊 Оновлено графік\n\n🟢 Світло є"
 
 
-    new_hash=hashlib.md5(final_message.encode()).hexdigest()
+    new_hash=hashlib.md5(final.encode()).hexdigest()
     old_hash=load_state()
 
-    if old_hash is None or new_hash!=old_hash:
 
-        send_message(final_message)
+    if new_hash!=old_hash:
+
+        send_message(final)
 
         save_state(new_hash)
 
-
-# ================= LOOP =================
-
-def runner():
-
-    while True:
-
-        try:
-
-            main()
-
-        except Exception as e:
-
-            print("ERROR:", e)
-
-        print("SLEEP 15 MIN")
-
-        time.sleep(900)
+        commit_state()
 
 
-# ================= START =================
+    reminders=load_reminders()
 
-threading.Thread(target=keep_alive).start()
 
-runner()
+    for k,qs in reminder_groups.items():
+
+        s,e=map(int,k.split("-"))
+
+        rkey=f"{k}"
+
+        if rkey in reminders:
+            continue
+
+
+        txt=(
+            "⚠️ Через 1 годину відключення світла\n\n"
+            f"🔴 {format_time(s)}–{format_time(e)}\n"
+            f"Черги: {', '.join(qs)}"
+        )
+
+        send_message(txt)
+
+        save_reminder(rkey)
+
+        commit_state()
+
+
+if __name__=="__main__":
+    main()
