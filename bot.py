@@ -50,18 +50,18 @@ def send_message(text):
     )
 
 
-def load_state():
+def load_file(path):
 
-    if not os.path.exists(STATE_FILE):
+    if not os.path.exists(path):
         return None
 
-    with open(STATE_FILE,"r") as f:
+    with open(path,"r") as f:
         return f.read().strip()
 
 
-def save_state(value):
+def save_file(path,value):
 
-    with open(STATE_FILE,"w") as f:
+    with open(path,"w") as f:
         f.write(value)
 
 
@@ -86,7 +86,7 @@ def commit_state():
     subprocess.run(["git","config","--global","user.email","bot@github"])
 
     subprocess.run(["git","add",STATE_FILE,REMINDER_FILE])
-    subprocess.run(["git","commit","-m","update"],check=False)
+    subprocess.run(["git","commit","-m","update state"],check=False)
     subprocess.run(["git","push"],check=False)
 
 
@@ -95,14 +95,14 @@ def format_time(minutes):
     return f"{minutes//60:02d}:{minutes%60:02d}"
 
 
-def build_intervals(fact_data):
+def build_intervals(data):
 
     intervals=[]
     current=None
 
     for hour in range(1,25):
 
-        status=fact_data.get(str(hour))
+        status=data.get(str(hour))
 
         if status in ["no","first","second"]:
 
@@ -111,7 +111,6 @@ def build_intervals(fact_data):
 
             if status=="first":
                 end=start+30
-
             elif status=="second":
                 start+=30
 
@@ -178,7 +177,6 @@ def main():
     now=datetime.now(KYIV_TZ)
     now_minutes=now.hour*60+now.minute
 
-
     off_groups={}
     reminder_groups={}
 
@@ -222,22 +220,19 @@ def main():
 
             off_groups.setdefault(key,[]).append(address["queue_name"])
 
-
             diff=s-now_minutes
 
             if 55<=diff<=65:
-
                 reminder_groups.setdefault(key,[]).append(address["queue_name"])
-
 
         time.sleep(1)
 
 
     off_lines=[]
 
-    for k,queues in off_groups.items():
+    for key,queues in off_groups.items():
 
-        s,e=map(int,k.split("-"))
+        s,e=map(int,key.split("-"))
 
         off_lines.append(
             f"Черга {', '.join(queues)} — {format_time(s)}–{format_time(e)}"
@@ -246,24 +241,30 @@ def main():
 
     if off_lines:
 
-        final="📊 Оновлено графік\n\n🔴 Відключення:\n"+ "\n".join(off_lines)
+        final=(
+            "📊 Оновлено графік\n\n"
+            "🔴 Відключення:\n"
+            + "\n".join(off_lines)
+            + "\n\n🟢 Інші черги — світло є"
+        )
 
     else:
 
-        final="📊 Оновлено графік\n\n🟢 До кінця доби світло буде"
+        final="📊 Оновлено графік\n\n🟢 Світло є"
 
 
     today_str=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
 
     new_hash=hashlib.md5((today_str+final).encode()).hexdigest()
-    old_hash=load_state()
+
+    old_hash=load_file(STATE_FILE)
 
 
     if new_hash!=old_hash:
 
         send_message(final)
 
-        save_state(new_hash)
+        save_file(STATE_FILE,new_hash)
 
         commit_state()
 
@@ -271,11 +272,11 @@ def main():
     reminders=load_reminders()
 
 
-    for k,queues in reminder_groups.items():
+    for key,queues in reminder_groups.items():
 
-        s,e=map(int,k.split("-"))
+        s,e=map(int,key.split("-"))
 
-        rkey=f"{today_str}_{k}"
+        rkey=f"{today_str}_{key}"
 
         if rkey in reminders:
             continue
