@@ -263,7 +263,7 @@ def process():
             "📊 Оновлено графік\n\n"
             "🔴 Відключення:\n"
             + "\n".join(off_lines)
-            + "\n\n🟢 Інші черги — світло є"
+            + "\n\n🟢 Інші черги — світло є до кінця доби"
         )
 
     else:
@@ -325,7 +325,7 @@ def process():
 
 
         tomorrow_text=(
-            "📅 Графік на завтра\n\n"
+            "🗓️ Графік на завтра\n\n"
             "🔴 Відключення:\n"
             + "\n".join(tomorrow_lines)
         )
@@ -351,4 +351,4 @@ while True:
     except Exception as e:
         print("ERROR:",e)
 
-    time.sleep(600)
+    time.sleep(900)
