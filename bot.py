@@ -250,7 +250,7 @@ def main():
 
     else:
 
-        final="📊 Оновлено графік\n\n🟢 Світло є"
+        final="📊 Оновлено графік\n\n🟢 Світло є до кінця доби"
 
 
     today_str=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
