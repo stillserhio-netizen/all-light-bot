@@ -85,7 +85,7 @@ def commit_state():
     subprocess.run(["git","config","--global","user.name","bot"])
     subprocess.run(["git","config","--global","user.email","bot@github"])
 
-    subprocess.run(["git","add",STATE_FILE,REMINDER_FILE])
+    subprocess.run(["git","add",STATE_FILE])
     subprocess.run(["git","commit","-m","update state"],check=False)
     subprocess.run(["git","push"],check=False)
 
@@ -111,6 +111,7 @@ def build_intervals(data):
 
             if status=="first":
                 end=start+30
+
             elif status=="second":
                 start+=30
 
@@ -155,13 +156,11 @@ def main():
     r1=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
 
     if r1.status_code!=200:
-        print("GET ERROR")
         return
 
     csrf=get_csrf(r1.text)
 
     if not csrf:
-        print("CSRF ERROR")
         return
 
 
@@ -245,7 +244,7 @@ def main():
             "📊 Оновлено графік\n\n"
             "🔴 Відключення:\n"
             + "\n".join(off_lines)
-            + "\n\n🟢 Інші черги — світло є"
+            + "\n\n🟢 Інші черги — світло є до кінця доби"
         )
 
     else:
@@ -253,9 +252,9 @@ def main():
         final="📊 Оновлено графік\n\n🟢 Світло є до кінця доби"
 
 
-    today_str=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+    today=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
 
-    new_hash=hashlib.md5((today_str+final).encode()).hexdigest()
+    new_hash=hashlib.md5((today+final).encode()).hexdigest()
 
     old_hash=load_file(STATE_FILE)
 
@@ -276,7 +275,7 @@ def main():
 
         s,e=map(int,key.split("-"))
 
-        rkey=f"{today_str}_{key}"
+        rkey=f"{today}_{key}"
 
         if rkey in reminders:
             continue
@@ -291,8 +290,6 @@ def main():
         send_message(text)
 
         save_reminder(rkey)
-
-        commit_state()
 
 
 if __name__=="__main__":
