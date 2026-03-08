@@ -16,6 +16,7 @@ BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
+STATE_TOMORROW = "state_tomorrow.txt"
 REMINDER_FILE = "reminders.txt"
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
@@ -23,18 +24,18 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 ADDRESSES = [
 
-    {"city":"с. Карапиші","street":"вул. Молодіжна 12","queue_code":"GPV1.1","queue_name":"1.1"},
-    {"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"1.2"},
-    {"city":"м. Біла Церква","street":"вул. Гончара Олеся 2","queue_code":"GPV2.1","queue_name":"2.1"},
-    {"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"2.2"},
-    {"city":"м. Миронівка","street":"вул. Шевченка 2","queue_code":"GPV3.1","queue_name":"3.1"},
-    {"city":"м. Миронівка","street":"вул. Зеленого Мирона 13","queue_code":"GPV3.2","queue_name":"3.2"},
-    {"city":"м. Біла Церква","street":"вул. Рибна 32","queue_code":"GPV4.1","queue_name":"4.1"},
-    {"city":"м. Біла Церква","street":"вул. Шевченка 4","queue_code":"GPV4.2","queue_name":"4.2"},
-    {"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"5.1"},
-    {"city":"м. Біла Церква","street":"вул. Глибочицька 18","queue_code":"GPV5.2","queue_name":"5.2"},
-    {"city":"м. Біла Церква","street":"вул. Сухоярська 4","queue_code":"GPV6.1","queue_name":"6.1"},
-    {"city":"м. Вишневе","street":"вул. Гоголя 2","queue_code":"GPV6.2","queue_name":"6.2"}
+{"city":"с. Карапиші","street":"вул. Молодіжна 12","queue_code":"GPV1.1","queue_name":"1.1"},
+{"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"1.2"},
+{"city":"м. Біла Церква","street":"вул. Гончара Олеся 2","queue_code":"GPV2.1","queue_name":"2.1"},
+{"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"2.2"},
+{"city":"м. Миронівка","street":"вул. Шевченка 2","queue_code":"GPV3.1","queue_name":"3.1"},
+{"city":"м. Миронівка","street":"вул. Зеленого Мирона 13","queue_code":"GPV3.2","queue_name":"3.2"},
+{"city":"м. Біла Церква","street":"вул. Рибна 32","queue_code":"GPV4.1","queue_name":"4.1"},
+{"city":"м. Біла Церква","street":"вул. Шевченка 4","queue_code":"GPV4.2","queue_name":"4.2"},
+{"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"5.1"},
+{"city":"м. Біла Церква","street":"вул. Глибочицька 18","queue_code":"GPV5.2","queue_name":"5.2"},
+{"city":"м. Біла Церква","street":"вул. Сухоярська 4","queue_code":"GPV6.1","queue_name":"6.1"},
+{"city":"м. Вишневе","street":"вул. Гоголя 2","queue_code":"GPV6.2","queue_name":"6.2"}
 
 ]
 
@@ -43,10 +44,7 @@ def send_message(text):
 
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={
-            "chat_id": CHAT_ID,
-            "text": text
-        }
+        data={"chat_id": CHAT_ID, "text": text}
     )
 
 
@@ -55,7 +53,7 @@ def load_file(path):
     if not os.path.exists(path):
         return None
 
-    with open(path,"r") as f:
+    with open(path) as f:
         return f.read().strip()
 
 
@@ -70,7 +68,7 @@ def load_reminders():
     if not os.path.exists(REMINDER_FILE):
         return set()
 
-    with open(REMINDER_FILE,"r") as f:
+    with open(REMINDER_FILE) as f:
         return set(f.read().splitlines())
 
 
@@ -85,7 +83,7 @@ def commit_state():
     subprocess.run(["git","config","--global","user.name","bot"])
     subprocess.run(["git","config","--global","user.email","bot@github"])
 
-    subprocess.run(["git","add",STATE_FILE])
+    subprocess.run(["git","add","."])
     subprocess.run(["git","commit","-m","update state"],check=False)
     subprocess.run(["git","push"],check=False)
 
@@ -147,9 +145,7 @@ def get_csrf(html):
     return m.group(1)
 
 
-def main():
-
-    print("BOT START")
+def process():
 
     session=requests.Session()
 
@@ -178,6 +174,7 @@ def main():
 
     off_groups={}
     reminder_groups={}
+    tomorrow_groups={}
 
 
     for address in ADDRESSES:
@@ -202,9 +199,17 @@ def main():
         if "fact" not in data:
             continue
 
+
         all_days=data["fact"]["data"]
 
-        today_ts=min(all_days.keys(),key=int)
+        timestamps=sorted(all_days.keys(),key=int)
+
+        today_ts=timestamps[0]
+
+        tomorrow_ts=None
+        if len(timestamps)>1:
+            tomorrow_ts=timestamps[1]
+
 
         fact_today=all_days[today_ts][address["queue_code"]]
 
@@ -224,7 +229,21 @@ def main():
             if 55<=diff<=65:
                 reminder_groups.setdefault(key,[]).append(address["queue_name"])
 
-        time.sleep(1)
+
+        if tomorrow_ts:
+
+            fact_tomorrow=all_days[tomorrow_ts][address["queue_code"]]
+
+            intervals_tomorrow=build_intervals(fact_tomorrow)
+
+            for s,e in intervals_tomorrow:
+
+                key=f"{s}-{e}"
+
+                tomorrow_groups.setdefault(key,[]).append(address["queue_name"])
+
+
+        time.sleep(0.5)
 
 
     off_lines=[]
@@ -244,7 +263,7 @@ def main():
             "📊 Оновлено графік\n\n"
             "🔴 Відключення:\n"
             + "\n".join(off_lines)
-            + "\n\n🟢 Інші черги — світло є до кінця доби"
+            + "\n\n🟢 Інші черги — світло є"
         )
 
     else:
@@ -292,5 +311,44 @@ def main():
         save_reminder(rkey)
 
 
-if __name__=="__main__":
-    main()
+    if tomorrow_groups and now.hour>=18:
+
+        tomorrow_lines=[]
+
+        for key,queues in tomorrow_groups.items():
+
+            s,e=map(int,key.split("-"))
+
+            tomorrow_lines.append(
+                f"Черга {', '.join(queues)} — {format_time(s)}–{format_time(e)}"
+            )
+
+
+        tomorrow_text=(
+            "📅 Графік на завтра\n\n"
+            "🔴 Відключення:\n"
+            + "\n".join(tomorrow_lines)
+        )
+
+
+        thash=hashlib.md5((today+tomorrow_text).encode()).hexdigest()
+
+        old=load_file(STATE_TOMORROW)
+
+        if thash!=old:
+
+            send_message(tomorrow_text)
+
+            save_file(STATE_TOMORROW,thash)
+
+            commit_state()
+
+
+while True:
+
+    try:
+        process()
+    except Exception as e:
+        print("ERROR:",e)
+
+    time.sleep(600)
