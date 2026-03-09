@@ -12,8 +12,8 @@ from zoneinfo import ZoneInfo
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
+CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
 STATE_TOMORROW = "state_tomorrow.txt"
