@@ -78,7 +78,6 @@ def send_message(text):
     )
 
     print("TELEGRAM STATUS:", r.status_code, flush=True)
-    print("TELEGRAM RESPONSE:", r.text, flush=True)
 
 
 # ================= FILE =================
@@ -131,7 +130,6 @@ def commit_state():
 # ================= HELPERS =================
 
 def format_time(minutes):
-
     return f"{minutes//60:02d}:{minutes%60:02d}"
 
 
@@ -176,7 +174,7 @@ def build_intervals(data):
 
 def get_csrf(html):
 
-    m=re.search(r'csrf-token" content="([^"]+)"',html)
+    m=re.search(r'name="csrf-token" content="([^"]+)"',html)
 
     if not m:
         m=re.search(r'content="([^"]+)" name="csrf-token"',html)
@@ -195,10 +193,16 @@ def process():
 
     session=requests.Session()
 
-    r1=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
+    r1=session.get(
+        BASE_URL,
+        headers={
+            "User-Agent":"Mozilla/5.0",
+            "Accept":"text/html",
+            "Accept-Language":"uk-UA"
+        }
+    )
 
     if r1.status_code!=200:
-        print("GET ERROR", flush=True)
         return
 
     csrf=get_csrf(r1.text)
@@ -222,7 +226,6 @@ def process():
 
     off_groups={}
     reminder_groups={}
-    tomorrow_groups={}
 
 
     for address in ADDRESSES:
@@ -239,8 +242,6 @@ def process():
 
         r2=session.post(API_URL,data=payload,headers=headers_post)
 
-        print("POST STATUS:", r2.status_code, flush=True)
-
         if r2.status_code!=200:
             continue
 
@@ -252,19 +253,11 @@ def process():
 
         all_days=data["fact"]["data"]
 
-        timestamps=sorted(all_days.keys(),key=int)
-
-        today_ts=timestamps[0]
-
-        tomorrow_ts=None
-        if len(timestamps)>1:
-            tomorrow_ts=timestamps[1]
-
+        today_ts=min(all_days.keys(),key=int)
 
         fact_today=all_days[today_ts][address["queue_code"]]
 
         intervals=build_intervals(fact_today)
-
 
         for s,e in intervals:
 
@@ -278,20 +271,7 @@ def process():
                 reminder_groups.setdefault(key,set()).add(address["queue_name"])
 
 
-        if tomorrow_ts:
-
-            fact_tomorrow=all_days[tomorrow_ts][address["queue_code"]]
-
-            intervals_tomorrow=build_intervals(fact_tomorrow)
-
-            for s,e in intervals_tomorrow:
-
-                key=f"{s}-{e}"
-
-                tomorrow_groups.setdefault(key,set()).add(address["queue_name"])
-
-
-        time.sleep(0.4)
+        time.sleep(0.5)
 
 
     off_lines=[]
@@ -329,8 +309,6 @@ def process():
 
 
     if old_hash is None or new_hash!=old_hash:
-
-        print("SEND MESSAGE", flush=True)
 
         send_message(final)
 
