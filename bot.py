@@ -31,7 +31,7 @@ def keep_alive():
     port = int(os.environ.get("PORT", 10000))
 
     with socketserver.TCPServer(("", port), Handler) as httpd:
-        print("HTTP SERVER STARTED", port)
+        print("HTTP SERVER STARTED", port, flush=True)
         httpd.serve_forever()
 
 
@@ -72,10 +72,13 @@ ADDRESSES = [
 
 def send_message(text):
 
-    requests.post(
+    r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={"chat_id": CHAT_ID, "text": text}
     )
+
+    print("TELEGRAM STATUS:", r.status_code, flush=True)
+    print("TELEGRAM RESPONSE:", r.text, flush=True)
 
 
 # ================= FILE =================
@@ -183,20 +186,20 @@ def get_csrf(html):
 
 def process():
 
-    print("CHECK GRAPH")
+    print("CHECK GRAPH", flush=True)
 
     session=requests.Session()
 
     r1=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
 
     if r1.status_code!=200:
-        print("GET ERROR")
+        print("GET ERROR", flush=True)
         return
 
     csrf=get_csrf(r1.text)
 
     if not csrf:
-        print("CSRF NOT FOUND")
+        print("CSRF NOT FOUND", flush=True)
         return
 
 
@@ -230,6 +233,8 @@ def process():
         }
 
         r2=session.post(API_URL,data=payload,headers=headers_post)
+
+        print("POST STATUS:", r2.status_code, flush=True)
 
         if r2.status_code!=200:
             continue
@@ -320,7 +325,7 @@ def process():
 
     if new_hash!=old_hash:
 
-        print("SEND MESSAGE")
+        print("SEND MESSAGE", flush=True)
 
         send_message(final)
 
@@ -392,7 +397,7 @@ def process():
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-print("BOT STARTED")
+print("BOT STARTED", flush=True)
 
 while True:
 
@@ -402,6 +407,6 @@ while True:
 
     except Exception as e:
 
-        print("ERROR:",e)
+        print("ERROR:", e, flush=True)
 
     time.sleep(600)
