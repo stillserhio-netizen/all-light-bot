@@ -44,7 +44,6 @@ BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
-STATE_TOMORROW = "state_tomorrow.txt"
 REMINDER_FILE = "reminders.txt"
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
@@ -172,17 +171,29 @@ def build_intervals(data):
     return intervals
 
 
-def get_csrf(html):
+def get_csrf(session):
 
-    m=re.search(r'name="csrf-token" content="([^"]+)"',html)
+    for attempt in range(3):
 
-    if not m:
-        m=re.search(r'content="([^"]+)" name="csrf-token"',html)
+        r=session.get(
+            BASE_URL,
+            headers={
+                "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
+                "Accept":"text/html,application/xhtml+xml",
+                "Accept-Language":"uk-UA,uk;q=0.9"
+            }
+        )
 
-    if not m:
-        return None
+        m=re.search(r'csrf-token" content="([^"]+)"',r.text)
 
-    return m.group(1)
+        if m:
+            return m.group(1)
+
+        print("CSRF retry", attempt+1, flush=True)
+
+        time.sleep(3)
+
+    return None
 
 
 # ================= MAIN =================
@@ -193,22 +204,12 @@ def process():
 
     session=requests.Session()
 
-    r1=session.get(
-        BASE_URL,
-        headers={
-            "User-Agent":"Mozilla/5.0",
-            "Accept":"text/html",
-            "Accept-Language":"uk-UA"
-        }
-    )
-
-    if r1.status_code!=200:
-        return
-
-    csrf=get_csrf(r1.text)
+    csrf=get_csrf(session)
 
     if not csrf:
+
         print("CSRF NOT FOUND", flush=True)
+
         return
 
 
