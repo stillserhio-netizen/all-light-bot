@@ -4,10 +4,34 @@ import hashlib
 import time
 import os
 import subprocess
+import threading
+import http.server
+import socketserver
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+
+# ================= HTTP SERVER (для Render) =================
+
+class Handler(http.server.BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+
+def keep_alive():
+
+    port = int(os.environ.get("PORT", 10000))
+
+    with socketserver.TCPServer(("", port), Handler) as httpd:
+        print("HTTP SERVER STARTED", port)
+        httpd.serve_forever()
+
+
+# ================= CONFIG =================
 
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
@@ -40,6 +64,8 @@ ADDRESSES = [
 ]
 
 
+# ================= TELEGRAM =================
+
 def send_message(text):
 
     requests.post(
@@ -47,6 +73,8 @@ def send_message(text):
         data={"chat_id": CHAT_ID, "text": text}
     )
 
+
+# ================= FILE =================
 
 def load_file(path):
 
@@ -87,6 +115,8 @@ def commit_state():
     subprocess.run(["git","commit","-m","update state"],check=False)
     subprocess.run(["git","push"],check=False)
 
+
+# ================= HELPERS =================
 
 def format_time(minutes):
 
@@ -144,6 +174,8 @@ def get_csrf(html):
 
     return m.group(1)
 
+
+# ================= MAIN LOGIC =================
 
 def process():
 
@@ -215,10 +247,8 @@ def process():
 
         intervals=build_intervals(fact_today)
 
-        future=intervals
 
-
-        for s,e in future:
+        for s,e in intervals:
 
             key=f"{s}-{e}"
 
@@ -245,6 +275,8 @@ def process():
 
         time.sleep(0.5)
 
+
+    # ---------- повідомлення ----------
 
     off_lines=[]
 
@@ -287,6 +319,8 @@ def process():
         commit_state()
 
 
+    # ---------- нагадування ----------
+
     today=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
 
     reminders=load_reminders()
@@ -312,6 +346,8 @@ def process():
 
         save_reminder(rkey)
 
+
+    # ---------- завтра ----------
 
     if tomorrow_groups and now.hour>=18:
 
@@ -348,11 +384,19 @@ def process():
             commit_state()
 
 
+# ================= START =================
+
+threading.Thread(target=keep_alive).start()
+
+
 while True:
 
     try:
+
         process()
+
     except Exception as e:
+
         print("ERROR:",e)
 
     time.sleep(600)
