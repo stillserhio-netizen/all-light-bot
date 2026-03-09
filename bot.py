@@ -215,19 +215,19 @@ def process():
 
         intervals=build_intervals(fact_today)
 
-        future=[(s,e) for s,e in intervals if e>now_minutes]
+        future=intervals
 
 
         for s,e in future:
 
             key=f"{s}-{e}"
 
-            off_groups.setdefault(key,[]).append(address["queue_name"])
+            off_groups.setdefault(key,set()).add(address["queue_name"])
 
             diff=s-now_minutes
 
             if 55<=diff<=65:
-                reminder_groups.setdefault(key,[]).append(address["queue_name"])
+                reminder_groups.setdefault(key,set()).add(address["queue_name"])
 
 
         if tomorrow_ts:
@@ -240,7 +240,7 @@ def process():
 
                 key=f"{s}-{e}"
 
-                tomorrow_groups.setdefault(key,[]).append(address["queue_name"])
+                tomorrow_groups.setdefault(key,set()).add(address["queue_name"])
 
 
         time.sleep(0.5)
@@ -248,7 +248,9 @@ def process():
 
     off_lines=[]
 
-    for key,queues in off_groups.items():
+    for key in sorted(off_groups.keys()):
+
+        queues=sorted(off_groups[key])
 
         s,e=map(int,key.split("-"))
 
@@ -263,17 +265,15 @@ def process():
             "📊 Оновлено графік\n\n"
             "🔴 Відключення:\n"
             + "\n".join(off_lines)
-            + "\n\n🟢 Інші черги — світло є до кінця доби"
+            + "\n\n🟢 Інші черги — світло є"
         )
 
     else:
 
-        final="📊 Оновлено графік\n\n🟢 Світло є до кінця доби"
+        final="📊 Оновлено графік\n\n🟢 Світло є"
 
 
-    today=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
-
-    new_hash=hashlib.md5((today+final).encode()).hexdigest()
+    new_hash=hashlib.md5(final.encode()).hexdigest()
 
     old_hash=load_file(STATE_FILE)
 
@@ -286,6 +286,8 @@ def process():
 
         commit_state()
 
+
+    today=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
 
     reminders=load_reminders()
 
@@ -303,7 +305,7 @@ def process():
         text=(
             "⚠️ Через 1 годину відключення світла\n\n"
             f"🔴 {format_time(s)}–{format_time(e)}\n"
-            f"Черги: {', '.join(queues)}"
+            f"Черги: {', '.join(sorted(queues))}"
         )
 
         send_message(text)
@@ -315,7 +317,9 @@ def process():
 
         tomorrow_lines=[]
 
-        for key,queues in tomorrow_groups.items():
+        for key in sorted(tomorrow_groups.keys()):
+
+            queues=sorted(tomorrow_groups[key])
 
             s,e=map(int,key.split("-"))
 
@@ -325,13 +329,13 @@ def process():
 
 
         tomorrow_text=(
-            "🗓️ Графік на завтра\n\n"
+            "📅 Графік на завтра\n\n"
             "🔴 Відключення:\n"
             + "\n".join(tomorrow_lines)
         )
 
 
-        thash=hashlib.md5((today+tomorrow_text).encode()).hexdigest()
+        thash=hashlib.md5(tomorrow_text.encode()).hexdigest()
 
         old=load_file(STATE_TOMORROW)
 
@@ -351,4 +355,4 @@ while True:
     except Exception as e:
         print("ERROR:",e)
 
-    time.sleep(900)
+    time.sleep(600)
