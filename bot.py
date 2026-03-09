@@ -12,7 +12,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
-# ================= HTTP SERVER =================
+# ================= HTTP SERVER (RENDER) =================
 
 class Handler(http.server.BaseHTTPRequestHandler):
 
@@ -35,6 +35,9 @@ def keep_alive():
         httpd.serve_forever()
 
 
+threading.Thread(target=keep_alive, daemon=True).start()
+
+
 # ================= CONFIG =================
 
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
@@ -44,6 +47,7 @@ BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
+STATE_TOMORROW = "state_tomorrow.txt"
 REMINDER_FILE = "reminders.txt"
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
@@ -73,7 +77,8 @@ def send_message(text):
 
     r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text}
+        data={"chat_id": CHAT_ID, "text": text},
+        timeout=20
     )
 
     print("TELEGRAM STATUS:", r.status_code, flush=True)
@@ -87,12 +92,7 @@ def load_file(path):
         return None
 
     with open(path) as f:
-        data = f.read().strip()
-
-    if data == "":
-        return None
-
-    return data
+        return f.read().strip()
 
 
 def save_file(path,value):
@@ -129,6 +129,7 @@ def commit_state():
 # ================= HELPERS =================
 
 def format_time(minutes):
+
     return f"{minutes//60:02d}:{minutes%60:02d}"
 
 
@@ -173,30 +174,27 @@ def build_intervals(data):
 
 def get_csrf(session):
 
-    for attempt in range(3):
+    headers={
+        "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+        "Accept":"text/html,application/xhtml+xml",
+        "Accept-Language":"uk-UA,uk;q=0.9"
+    }
 
-        r=session.get(
-            BASE_URL,
-            headers={
-                "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
-                "Accept":"text/html,application/xhtml+xml",
-                "Accept-Language":"uk-UA,uk;q=0.9"
-            }
-        )
+    for _ in range(3):
+
+        r=session.get(BASE_URL,headers=headers,timeout=20)
 
         m=re.search(r'csrf-token" content="([^"]+)"',r.text)
 
         if m:
             return m.group(1)
 
-        print("CSRF retry", attempt+1, flush=True)
-
         time.sleep(3)
 
     return None
 
 
-# ================= MAIN =================
+# ================= PROCESS =================
 
 def process():
 
@@ -207,9 +205,7 @@ def process():
     csrf=get_csrf(session)
 
     if not csrf:
-
         print("CSRF NOT FOUND", flush=True)
-
         return
 
 
@@ -227,6 +223,7 @@ def process():
 
     off_groups={}
     reminder_groups={}
+    tomorrow_groups={}
 
 
     for address in ADDRESSES:
@@ -241,10 +238,18 @@ def process():
             "data[2][value]":now.strftime("%H:%M %d.%m.%Y")
         }
 
-        r2=session.post(API_URL,data=payload,headers=headers_post)
+        try:
+
+            r2=session.post(API_URL,data=payload,headers=headers_post,timeout=20)
+
+        except:
+
+            continue
+
 
         if r2.status_code!=200:
             continue
+
 
         data=r2.json()
 
@@ -254,22 +259,45 @@ def process():
 
         all_days=data["fact"]["data"]
 
-        today_ts=min(all_days.keys(),key=int)
+        timestamps=sorted(all_days.keys(),key=int)
+
+        today_ts=timestamps[0]
+
+        tomorrow_ts=None
+        if len(timestamps)>1:
+            tomorrow_ts=timestamps[1]
+
 
         fact_today=all_days[today_ts][address["queue_code"]]
 
         intervals=build_intervals(fact_today)
 
-        for s,e in intervals:
+        future=[(s,e) for s,e in intervals if e>now_minutes]
+
+
+        for s,e in future:
 
             key=f"{s}-{e}"
 
-            off_groups.setdefault(key,set()).add(address["queue_name"])
+            off_groups.setdefault(key,[]).append(address["queue_name"])
 
             diff=s-now_minutes
 
             if 55<=diff<=65:
-                reminder_groups.setdefault(key,set()).add(address["queue_name"])
+                reminder_groups.setdefault(key,[]).append(address["queue_name"])
+
+
+        if tomorrow_ts:
+
+            fact_tomorrow=all_days[tomorrow_ts][address["queue_code"]]
+
+            intervals_tomorrow=build_intervals(fact_tomorrow)
+
+            for s,e in intervals_tomorrow:
+
+                key=f"{s}-{e}"
+
+                tomorrow_groups.setdefault(key,[]).append(address["queue_name"])
 
 
         time.sleep(0.5)
@@ -277,9 +305,7 @@ def process():
 
     off_lines=[]
 
-    for key in sorted(off_groups.keys()):
-
-        queues=sorted(off_groups[key])
+    for key,queues in off_groups.items():
 
         s,e=map(int,key.split("-"))
 
@@ -294,12 +320,12 @@ def process():
             "📊 Оновлено графік\n\n"
             "🔴 Відключення:\n"
             + "\n".join(off_lines)
-            + "\n\n🟢 Інші черги — світло є"
+            + "\n\n🟢 Інші черги — світло є до кінця доби"
         )
 
     else:
 
-        final="📊 Оновлено графік\n\n🟢 Світло є"
+        final="📊 Оновлено графік\n\n🟢 Світло є до кінця доби"
 
 
     today=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
@@ -309,7 +335,7 @@ def process():
     old_hash=load_file(STATE_FILE)
 
 
-    if old_hash is None or new_hash!=old_hash:
+    if new_hash!=old_hash:
 
         send_message(final)
 
@@ -334,7 +360,7 @@ def process():
         text=(
             "⚠️ Через 1 годину відключення світла\n\n"
             f"🔴 {format_time(s)}–{format_time(e)}\n"
-            f"Черги: {', '.join(sorted(queues))}"
+            f"Черги: {', '.join(queues)}"
         )
 
         send_message(text)
@@ -342,17 +368,50 @@ def process():
         save_reminder(rkey)
 
 
-# ================= START =================
+    if tomorrow_groups and now.hour>=18:
 
-threading.Thread(target=keep_alive, daemon=True).start()
+        tomorrow_lines=[]
+
+        for key,queues in tomorrow_groups.items():
+
+            s,e=map(int,key.split("-"))
+
+            tomorrow_lines.append(
+                f"Черга {', '.join(queues)} — {format_time(s)}–{format_time(e)}"
+            )
+
+
+        tomorrow_text=(
+            "🗓️ Графік на завтра\n\n"
+            "🔴 Відключення:\n"
+            + "\n".join(tomorrow_lines)
+        )
+
+
+        thash=hashlib.md5((today+tomorrow_text).encode()).hexdigest()
+
+        old=load_file(STATE_TOMORROW)
+
+        if thash!=old:
+
+            send_message(tomorrow_text)
+
+            save_file(STATE_TOMORROW,thash)
+
+            commit_state()
+
 
 print("BOT STARTED", flush=True)
+
 
 while True:
 
     try:
-        process()
-    except Exception as e:
-        print("ERROR:", e, flush=True)
 
-    time.sleep(600)
+        process()
+
+    except Exception as e:
+
+        print("ERROR:",e,flush=True)
+
+    time.sleep(900)
