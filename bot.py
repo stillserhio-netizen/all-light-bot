@@ -31,7 +31,7 @@ def keep_alive():
     port = int(os.environ.get("PORT", 10000))
 
     with socketserver.TCPServer(("", port), Handler) as httpd:
-        print("HTTP SERVER STARTED", port, flush=True)
+        print("HTTP SERVER STARTED", flush=True)
         httpd.serve_forever()
 
 
@@ -89,7 +89,12 @@ def load_file(path):
         return None
 
     with open(path) as f:
-        return f.read().strip()
+        data = f.read().strip()
+
+    if data == "":
+        return None
+
+    return data
 
 
 def save_file(path,value):
@@ -323,7 +328,7 @@ def process():
     old_hash=load_file(STATE_FILE)
 
 
-    if new_hash!=old_hash:
+    if old_hash is None or new_hash!=old_hash:
 
         print("SEND MESSAGE", flush=True)
 
@@ -358,41 +363,6 @@ def process():
         save_reminder(rkey)
 
 
-    if tomorrow_groups and now.hour>=18:
-
-        tomorrow_lines=[]
-
-        for key in sorted(tomorrow_groups.keys()):
-
-            queues=sorted(tomorrow_groups[key])
-
-            s,e=map(int,key.split("-"))
-
-            tomorrow_lines.append(
-                f"Черга {', '.join(queues)} — {format_time(s)}–{format_time(e)}"
-            )
-
-
-        tomorrow_text=(
-            "📅 Графік на завтра\n\n"
-            "🔴 Відключення:\n"
-            + "\n".join(tomorrow_lines)
-        )
-
-
-        thash=hashlib.md5(tomorrow_text.encode()).hexdigest()
-
-        old=load_file(STATE_TOMORROW)
-
-        if thash!=old:
-
-            send_message(tomorrow_text)
-
-            save_file(STATE_TOMORROW,thash)
-
-            commit_state()
-
-
 # ================= START =================
 
 threading.Thread(target=keep_alive, daemon=True).start()
@@ -402,11 +372,8 @@ print("BOT STARTED", flush=True)
 while True:
 
     try:
-
         process()
-
     except Exception as e:
-
         print("ERROR:", e, flush=True)
 
     time.sleep(600)
