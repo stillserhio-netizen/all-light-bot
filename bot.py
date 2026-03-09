@@ -21,6 +21,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK")
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
 
 def keep_alive():
 
@@ -186,6 +190,7 @@ def process():
     r1=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
 
     if r1.status_code!=200:
+        print("GET ERROR")
         return
 
     csrf=get_csrf(r1.text)
@@ -279,8 +284,6 @@ def process():
         time.sleep(0.4)
 
 
-    # ---------- TODAY MESSAGE ----------
-
     off_lines=[]
 
     for key in sorted(off_groups.keys()):
@@ -317,6 +320,8 @@ def process():
 
     if new_hash!=old_hash:
 
+        print("SEND MESSAGE")
+
         send_message(final)
 
         save_file(STATE_FILE,new_hash)
@@ -324,9 +329,8 @@ def process():
         commit_state()
 
 
-    # ---------- REMINDER ----------
-
     reminders=load_reminders()
+
 
     for key,queues in reminder_groups.items():
 
@@ -348,8 +352,6 @@ def process():
 
         save_reminder(rkey)
 
-
-    # ---------- TOMORROW ----------
 
     if tomorrow_groups and now.hour>=18:
 
@@ -388,8 +390,9 @@ def process():
 
 # ================= START =================
 
-threading.Thread(target=keep_alive).start()
+threading.Thread(target=keep_alive, daemon=True).start()
 
+print("BOT STARTED")
 
 while True:
 
