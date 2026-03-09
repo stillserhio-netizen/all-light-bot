@@ -12,7 +12,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
-# ================= HTTP SERVER (для Render) =================
+# ================= HTTP SERVER =================
 
 class Handler(http.server.BaseHTTPRequestHandler):
 
@@ -175,9 +175,11 @@ def get_csrf(html):
     return m.group(1)
 
 
-# ================= MAIN LOGIC =================
+# ================= MAIN =================
 
 def process():
+
+    print("CHECK GRAPH")
 
     session=requests.Session()
 
@@ -189,6 +191,7 @@ def process():
     csrf=get_csrf(r1.text)
 
     if not csrf:
+        print("CSRF NOT FOUND")
         return
 
 
@@ -273,10 +276,10 @@ def process():
                 tomorrow_groups.setdefault(key,set()).add(address["queue_name"])
 
 
-        time.sleep(0.5)
+        time.sleep(0.4)
 
 
-    # ---------- повідомлення ----------
+    # ---------- TODAY MESSAGE ----------
 
     off_lines=[]
 
@@ -305,7 +308,9 @@ def process():
         final="📊 Оновлено графік\n\n🟢 Світло є"
 
 
-    new_hash=hashlib.md5(final.encode()).hexdigest()
+    today=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+
+    new_hash=hashlib.md5((today+final).encode()).hexdigest()
 
     old_hash=load_file(STATE_FILE)
 
@@ -319,12 +324,9 @@ def process():
         commit_state()
 
 
-    # ---------- нагадування ----------
-
-    today=datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+    # ---------- REMINDER ----------
 
     reminders=load_reminders()
-
 
     for key,queues in reminder_groups.items():
 
@@ -347,7 +349,7 @@ def process():
         save_reminder(rkey)
 
 
-    # ---------- завтра ----------
+    # ---------- TOMORROW ----------
 
     if tomorrow_groups and now.hour>=18:
 
