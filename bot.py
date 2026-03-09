@@ -75,13 +75,19 @@ ADDRESSES = [
 
 def send_message(text):
 
-    r = requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text},
-        timeout=20
-    )
+    try:
 
-    print("TELEGRAM STATUS:", r.status_code, flush=True)
+        r = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": text},
+            timeout=20
+        )
+
+        print("TELEGRAM STATUS:", r.status_code, flush=True)
+
+    except Exception as e:
+
+        print("TELEGRAM ERROR:", e, flush=True)
 
 
 # ================= FILE =================
@@ -175,21 +181,16 @@ def build_intervals(data):
 def get_csrf(session):
 
     headers={
-        "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
-        "Accept":"text/html,application/xhtml+xml",
-        "Accept-Language":"uk-UA,uk;q=0.9"
+        "User-Agent":"Mozilla/5.0",
+        "Accept":"text/html"
     }
 
-    for _ in range(3):
+    r=session.get(BASE_URL,headers=headers,timeout=20)
 
-        r=session.get(BASE_URL,headers=headers,timeout=20)
+    m=re.search(r'csrf-token" content="([^"]+)"',r.text)
 
-        m=re.search(r'csrf-token" content="([^"]+)"',r.text)
-
-        if m:
-            return m.group(1)
-
-        time.sleep(3)
+    if m:
+        return m.group(1)
 
     return None
 
@@ -205,6 +206,7 @@ def process():
     csrf=get_csrf(session)
 
     if not csrf:
+
         print("CSRF NOT FOUND", flush=True)
         return
 
@@ -242,18 +244,24 @@ def process():
 
             r2=session.post(API_URL,data=payload,headers=headers_post,timeout=20)
 
-        except:
+            if r2.status_code!=200:
+                print("POST ERROR",r2.status_code)
+                continue
 
+            try:
+                data=r2.json()
+            except:
+                print("JSON ERROR",r2.text[:100])
+                continue
+
+        except Exception as e:
+
+            print("REQUEST ERROR",e)
             continue
 
-
-        if r2.status_code!=200:
-            continue
-
-
-        data=r2.json()
 
         if "fact" not in data:
+            print("FACT NOT FOUND",address["queue_name"])
             continue
 
 
@@ -368,50 +376,14 @@ def process():
         save_reminder(rkey)
 
 
-    if tomorrow_groups and now.hour>=18:
-
-        tomorrow_lines=[]
-
-        for key,queues in tomorrow_groups.items():
-
-            s,e=map(int,key.split("-"))
-
-            tomorrow_lines.append(
-                f"Черга {', '.join(queues)} — {format_time(s)}–{format_time(e)}"
-            )
-
-
-        tomorrow_text=(
-            "🗓️ Графік на завтра\n\n"
-            "🔴 Відключення:\n"
-            + "\n".join(tomorrow_lines)
-        )
-
-
-        thash=hashlib.md5((today+tomorrow_text).encode()).hexdigest()
-
-        old=load_file(STATE_TOMORROW)
-
-        if thash!=old:
-
-            send_message(tomorrow_text)
-
-            save_file(STATE_TOMORROW,thash)
-
-            commit_state()
-
-
 print("BOT STARTED", flush=True)
 
 
 while True:
 
     try:
-
         process()
-
     except Exception as e:
-
         print("ERROR:",e,flush=True)
 
     time.sleep(900)
