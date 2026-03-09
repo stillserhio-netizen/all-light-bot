@@ -4,47 +4,16 @@ import hashlib
 import time
 import os
 import subprocess
-import threading
-import http.server
-import socketserver
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
-# ================= HTTP SERVER (RENDER) =================
-
-class Handler(http.server.BaseHTTPRequestHandler):
-
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-
-
-def keep_alive():
-
-    port = int(os.environ.get("PORT", 10000))
-
-    with socketserver.TCPServer(("", port), Handler) as httpd:
-        print("HTTP SERVER STARTED", flush=True)
-        httpd.serve_forever()
-
-
-threading.Thread(target=keep_alive, daemon=True).start()
-
-
-# ================= CONFIG =================
-
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
-BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
-CHAT_ID = "-1003802691352"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 STATE_FILE = "state.txt"
 STATE_TOMORROW = "state_tomorrow.txt"
@@ -71,26 +40,14 @@ ADDRESSES = [
 ]
 
 
-# ================= TELEGRAM =================
-
 def send_message(text):
 
-    try:
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data={"chat_id": CHAT_ID, "text": text},
+        timeout=20
+    )
 
-        r = requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": text},
-            timeout=20
-        )
-
-        print("TELEGRAM STATUS:", r.status_code, flush=True)
-
-    except Exception as e:
-
-        print("TELEGRAM ERROR:", e, flush=True)
-
-
-# ================= FILE =================
 
 def load_file(path):
 
@@ -131,8 +88,6 @@ def commit_state():
     subprocess.run(["git","commit","-m","update state"],check=False)
     subprocess.run(["git","push"],check=False)
 
-
-# ================= HELPERS =================
 
 def format_time(minutes):
 
@@ -178,36 +133,29 @@ def build_intervals(data):
     return intervals
 
 
-def get_csrf(session):
+def get_csrf(html):
 
-    headers={
-        "User-Agent":"Mozilla/5.0",
-        "Accept":"text/html"
-    }
+    m=re.search(r'csrf-token" content="([^"]+)"',html)
 
-    r=session.get(BASE_URL,headers=headers,timeout=20)
+    if not m:
+        m=re.search(r'content="([^"]+)" name="csrf-token"',html)
 
-    m=re.search(r'csrf-token" content="([^"]+)"',r.text)
+    if not m:
+        return None
 
-    if m:
-        return m.group(1)
+    return m.group(1)
 
-    return None
-
-
-# ================= PROCESS =================
 
 def process():
 
-    print("CHECK GRAPH", flush=True)
-
     session=requests.Session()
 
-    csrf=get_csrf(session)
+    r1=session.get(BASE_URL,headers={"User-Agent":"Mozilla/5.0"})
+
+    csrf=get_csrf(r1.text)
 
     if not csrf:
-
-        print("CSRF NOT FOUND", flush=True)
+        print("CSRF NOT FOUND")
         return
 
 
@@ -240,28 +188,14 @@ def process():
             "data[2][value]":now.strftime("%H:%M %d.%m.%Y")
         }
 
-        try:
+        r2=session.post(API_URL,data=payload,headers=headers_post)
 
-            r2=session.post(API_URL,data=payload,headers=headers_post,timeout=20)
-
-            if r2.status_code!=200:
-                print("POST ERROR",r2.status_code)
-                continue
-
-            try:
-                data=r2.json()
-            except:
-                print("JSON ERROR",r2.text[:100])
-                continue
-
-        except Exception as e:
-
-            print("REQUEST ERROR",e)
+        if r2.status_code!=200:
             continue
 
+        data=r2.json()
 
         if "fact" not in data:
-            print("FACT NOT FOUND",address["queue_name"])
             continue
 
 
@@ -308,7 +242,7 @@ def process():
                 tomorrow_groups.setdefault(key,[]).append(address["queue_name"])
 
 
-        time.sleep(0.5)
+        time.sleep(1)
 
 
     off_lines=[]
@@ -352,38 +286,4 @@ def process():
         commit_state()
 
 
-    reminders=load_reminders()
-
-
-    for key,queues in reminder_groups.items():
-
-        s,e=map(int,key.split("-"))
-
-        rkey=f"{today}_{key}"
-
-        if rkey in reminders:
-            continue
-
-
-        text=(
-            "⚠️ Через 1 годину відключення світла\n\n"
-            f"🔴 {format_time(s)}–{format_time(e)}\n"
-            f"Черги: {', '.join(queues)}"
-        )
-
-        send_message(text)
-
-        save_reminder(rkey)
-
-
-print("BOT STARTED", flush=True)
-
-
-while True:
-
-    try:
-        process()
-    except Exception as e:
-        print("ERROR:",e,flush=True)
-
-    time.sleep(900)
+process()
