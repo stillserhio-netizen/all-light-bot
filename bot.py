@@ -5,6 +5,8 @@ import time
 import os
 import subprocess
 import logging
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -210,6 +212,7 @@ def process() -> None:
     csrf = get_csrf(r1.text)
     if not csrf:
         log.warning("CSRF token not found — site layout may have changed")
+        log.debug("First 500 chars of response: %s", r1.text[:500])
         return
 
     headers_post = {
@@ -326,7 +329,32 @@ def process() -> None:
 
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "900"))  # default 15 min
 
+
+# ── Health-check server (required by Render web service) ─────────────────────
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, *args):
+        pass  # silence access logs
+
+
+def _start_health_server() -> None:
+    port = int(os.getenv("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    log.info("Health-check server listening on port %d", port)
+    server.serve_forever()
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
+    # Start health-check server in background so Render sees an open port
+    threading.Thread(target=_start_health_server, daemon=True).start()
+
     log.info("Bot started. Poll interval: %ds", POLL_INTERVAL)
     while True:
         try:
