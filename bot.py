@@ -3,7 +3,6 @@ import re
 import hashlib
 import time
 import os
-import subprocess
 import logging
 
 from datetime import datetime
@@ -25,8 +24,8 @@ log = logging.getLogger(__name__)
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
 API_URL  = "https://www.dtek-krem.com.ua/ua/ajax"
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs")
-CHAT_ID   = os.getenv("CHAT_ID",   "-1003802691352")
+BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
+CHAT_ID   = "-1003802691352"
 
 STATE_FILE     = "state.txt"
 STATE_TOMORROW = "state_tomorrow.txt"
@@ -52,24 +51,7 @@ ADDRESSES = [
 
 # ── Git / file state ──────────────────────────────────────────────────────────
 
-def commit_state() -> None:
-    """Push updated state files to GitHub."""
-    try:
-        subprocess.run(["git", "config", "--global", "user.name",  "bot"],        check=True, capture_output=True)
-        subprocess.run(["git", "config", "--global", "user.email", "bot@github"], check=True, capture_output=True)
-        subprocess.run(["git", "add", STATE_FILE, STATE_TOMORROW, REMINDER_FILE], check=True, capture_output=True)
-
-        # Check if there's actually something staged
-        diff = subprocess.run(["git", "diff", "--cached", "--quiet"], capture_output=True)
-        if diff.returncode == 0:
-            log.debug("Nothing to commit")
-            return
-
-        subprocess.run(["git", "commit", "-m", "update state"], check=True, capture_output=True)
-        subprocess.run(["git", "push"],                          check=True, capture_output=True)
-        log.info("State committed and pushed to GitHub")
-    except subprocess.CalledProcessError as exc:
-        log.error("Git error: %s", exc)
+# State is committed by GitHub Actions workflow after bot.py exits
 
 
 def load_file(path: str) -> str | None:
@@ -283,7 +265,6 @@ def process() -> None:
 
         time.sleep(3)
 
-    needs_commit = False
 
     # 3. Today's schedule
     schedule = format_schedule(off_groups, all_queue_names)
@@ -293,7 +274,6 @@ def process() -> None:
     if new_hash != load_file(STATE_FILE):
         if send_message(final):
             save_file(STATE_FILE, new_hash)
-            needs_commit = True
             log.info("Today's schedule updated")
 
     # 4. One-hour reminders
@@ -310,7 +290,6 @@ def process() -> None:
         )
         if send_message(text):
             save_reminder(rkey)
-            needs_commit = True
 
     # 5. Tomorrow's schedule (only after 18:00)
     if tomorrow_groups and now.hour >= 18:
@@ -321,26 +300,16 @@ def process() -> None:
         if thash != load_file(STATE_TOMORROW):
             if send_message(tomorrow_text):
                 save_file(STATE_TOMORROW, thash)
-                needs_commit = True
                 log.info("Tomorrow's schedule updated")
 
-    # 6. Single commit per cycle only if something actually changed
-    if needs_commit:
-        commit_state()
-
 
 # ── Entry point ───────────────────────────────────────────────────────────────
-
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "900"))  # default 15 min
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
+# GitHub Actions runs this script once per cron trigger — no loop needed.
 
 if __name__ == "__main__":
-    log.info("Bot started. Poll interval: %ds", POLL_INTERVAL)
-    while True:
-        try:
-            process()
-        except Exception as exc:
-            log.exception("Unhandled error: %s", exc)
-        time.sleep(POLL_INTERVAL)
+    log.info("Bot run started")
+    try:
+        process()
+    except Exception as exc:
+        log.exception("Unhandled error: %s", exc)
+    log.info("Bot run finished")
