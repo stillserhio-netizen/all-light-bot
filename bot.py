@@ -250,6 +250,7 @@ def process() -> None:
 
         # Today's outages
         fact_today = all_days[today_ts].get(address["queue_code"], {})
+        log.info("DEBUG %s: %s", address["queue_code"], fact_today)
         for s, e in build_intervals(fact_today):
             if e > now_minutes:
                 key = f"{s}-{e}"
