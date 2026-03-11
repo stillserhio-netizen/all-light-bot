@@ -2,14 +2,14 @@ name: Light Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # every 15 minutes
-  workflow_dispatch:           # allow manual run from GitHub UI
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
     permissions:
-      contents: write          # needed for git push
+      contents: write
 
     steps:
       - name: Checkout repo
@@ -32,6 +32,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add state.txt state_tomorrow.txt reminders.txt
+          git add -f state.txt state_tomorrow.txt reminders.txt 2>/dev/null || true
           git diff --cached --quiet || git commit -m "update state [skip ci]"
           git push
