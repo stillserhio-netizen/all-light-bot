@@ -197,7 +197,11 @@ def format_schedule(off_groups: dict[str, list[str]], all_queues: set[str]) -> s
 
 def process() -> None:
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0"})
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
+    })
 
     # 1. Fetch page and extract CSRF token
     try:
@@ -227,6 +231,9 @@ def process() -> None:
     off_groups:      dict[str, list[str]] = {}
     reminder_groups: dict[str, list[str]] = {}
     tomorrow_groups: dict[str, list[str]] = {}
+
+    # Pause before starting POST requests — avoids Incapsula rate-limit
+    time.sleep(2)
 
     # 2. Query each address
     for address in ADDRESSES:
@@ -274,7 +281,7 @@ def process() -> None:
             for s, e in build_intervals(fact_tomorrow):
                 tomorrow_groups.setdefault(f"{s}-{e}", []).append(address["queue_name"])
 
-        time.sleep(0.5)
+        time.sleep(3)
 
     needs_commit = False
 
