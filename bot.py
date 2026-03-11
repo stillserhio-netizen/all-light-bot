@@ -267,7 +267,7 @@ def process() -> None:
             for s, e in build_intervals(fact_tomorrow):
                 tomorrow_groups.setdefault(f"{s}-{e}", []).append(address["queue_name"])
 
-        time.sleep(7)
+        time.sleep(15)
 
 
     # 3. Today's schedule
