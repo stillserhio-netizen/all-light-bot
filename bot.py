@@ -211,8 +211,7 @@ def process() -> None:
 
     csrf = get_csrf(r1.text)
     if not csrf:
-        log.warning("CSRF token not found — site layout may have changed")
-        log.debug("First 500 chars of response: %s", r1.text[:500])
+        log.warning("CSRF token not found. Status: %d. Response start:\n%s", r1.status_code, r1.text[:800])
         return
 
     headers_post = {
