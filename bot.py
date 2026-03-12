@@ -213,7 +213,7 @@ def fetch_chunk(addresses: list) -> dict:
             continue
 
         if "fact" not in data:
-            log.warning("No 'fact' for %s", address["queue_code"])
+            log.warning("No 'fact' for %s. Response: %s", address["queue_code"], str(data)[:300])
             continue
 
         all_days   = data["fact"]["data"]
