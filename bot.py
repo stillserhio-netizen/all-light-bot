@@ -29,8 +29,6 @@ STATE_FILE = "state.txt"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
-# ── ACTIVE QUEUES ─────────────────────────
-
 QUEUES = {
     "GPV1.2": "1.2",
     "GPV2.1": "2.1",
@@ -38,14 +36,11 @@ QUEUES = {
 }
 
 
-# ── ADDRESS ДЛЯ ОДНОГО ЗАПИТУ ────────────
-# (використовується лише щоб отримати JSON)
-
 CITY = "м. Богуслав"
 STREET = "вул. Теліги Олени"
 
 
-# ── Telegram ─────────────────────────────
+# ── Telegram ─────────────────
 
 def send_message(text):
 
@@ -60,7 +55,7 @@ def send_message(text):
     log.info("Telegram status %s", r.status_code)
 
 
-# ── State ────────────────────────────────
+# ── State ─────────────────
 
 def load_state():
 
@@ -68,6 +63,7 @@ def load_state():
         return None
 
     with open(STATE_FILE) as f:
+
         v = f.read().strip()
 
         if v == "":
@@ -102,7 +98,7 @@ def commit_state():
         log.error("Git push error %s", e)
 
 
-# ── Helpers ──────────────────────────────
+# ── Helpers ─────────────────
 
 def format_time(m):
 
@@ -145,6 +141,7 @@ def build_intervals(data):
                 start += 30
 
             if current and start == current[1]:
+
                 current[1] = end
 
             else:
@@ -166,13 +163,42 @@ def build_intervals(data):
     return intervals
 
 
-# ── MAIN ─────────────────────────────────
+# ── Schedule control ─────────────────
+
+def allowed_to_run():
+
+    now = datetime.now(KYIV_TZ)
+
+    hour = now.hour
+    minute = now.minute
+
+    log.info("LOCAL TIME %02d:%02d", hour, minute)
+
+    # день → кожні 10 хв
+    if 5 <= hour < 22:
+
+        return True
+
+    # ніч → лише раз на годину
+    if minute != 0:
+
+        log.info("NIGHT MODE SKIP")
+
+        return False
+
+    return True
+
+
+# ── Main ─────────────────
 
 def process():
 
+    if not allowed_to_run():
+        return
+
+
     session=requests.Session()
 
-    # невелика пауза щоб не банив DTEK
     time.sleep(5)
 
     r1=session.get(BASE_URL)
