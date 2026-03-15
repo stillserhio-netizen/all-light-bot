@@ -288,7 +288,7 @@ def process():
 
     if lines:
 
-        text="📊 Оновлено графік\n\nTEST"+ "\n".join(lines)
+        text="📊 Оновлено графік\n\n"+ "\n".join(lines)
 
     else:
 
