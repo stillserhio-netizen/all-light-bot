@@ -3,7 +3,6 @@ import re
 import hashlib
 import time
 import os
-import json
 import logging
 import subprocess
 
@@ -30,25 +29,22 @@ STATE_FILE = "state.txt"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
-# ── ADDRESSES ─────────────────────────────
-
 ADDRESSES = [
 
-# --- ACTIVE GROUP (chunk 0) ---
+# {"city":"с. Карапиші","street":"вул. Молодіжна 12","queue_code":"GPV1.1","queue_name":"1.1"},
 
 {"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"1.2"},
+
 {"city":"м. Біла Церква","street":"вул. Гончара Олеся 2","queue_code":"GPV2.1","queue_name":"2.1"},
-{"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"5.1"},
 
-
-# --- OTHER GROUPS (НЕ використовуються) ---
-
-# {"city":"с. Карапиші","street":"вул. Молодіжна 12","queue_code":"GPV1.1","queue_name":"1.1"},
 # {"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"2.2"},
 # {"city":"м. Миронівка","street":"вул. Шевченка 2","queue_code":"GPV3.1","queue_name":"3.1"},
 # {"city":"м. Миронівка","street":"вул. Зеленого Мирона 13","queue_code":"GPV3.2","queue_name":"3.2"},
 # {"city":"м. Біла Церква","street":"вул. Рибна 32","queue_code":"GPV4.1","queue_name":"4.1"},
 # {"city":"м. Біла Церква","street":"вул. Шевченка 4","queue_code":"GPV4.2","queue_name":"4.2"},
+
+{"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"5.1"},
+
 # {"city":"м. Біла Церква","street":"вул. Глибочицька 18","queue_code":"GPV5.2","queue_name":"5.2"},
 # {"city":"м. Біла Церква","street":"вул. Сухоярська 4","queue_code":"GPV6.1","queue_name":"6.1"},
 # {"city":"м. Вишневе","street":"вул. Гоголя 2","queue_code":"GPV6.2","queue_name":"6.2"},
@@ -56,27 +52,18 @@ ADDRESSES = [
 ]
 
 
-# ── CHUNK SETTINGS ─────────────────────────
-
-CHUNK_SIZE = 3
-CHUNK = 0
-
-ACTIVE_ADDRESSES = ADDRESSES[CHUNK*CHUNK_SIZE:(CHUNK+1)*CHUNK_SIZE]
-
-
-# ── TELEGRAM ───────────────────────────────
-
 def send_message(text):
 
     r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text}
+        data={
+            "chat_id": CHAT_ID,
+            "text": text
+        }
     )
 
     log.info("Telegram status %s", r.status_code)
 
-
-# ── STATE ──────────────────────────────────
 
 def load_state():
 
@@ -84,7 +71,12 @@ def load_state():
         return None
 
     with open(STATE_FILE) as f:
-        return f.read().strip()
+        value = f.read().strip()
+
+        if value == "":
+            return None
+
+        return value
 
 
 def save_state(value):
@@ -112,8 +104,6 @@ def commit_state():
 
         log.error("Git push error %s", e)
 
-
-# ── HELPERS ────────────────────────────────
 
 def format_time(m):
 
@@ -150,13 +140,14 @@ def build_intervals(data):
             end = hour*60
 
             if status=="first":
-                end=start+30
+                end = start+30
 
             elif status=="second":
-                start+=30
+                start += 30
 
-            if current and start==current[1]:
-                current[1]=end
+            if current and start == current[1]:
+
+                current[1] = end
 
             else:
 
@@ -176,8 +167,6 @@ def build_intervals(data):
 
     return intervals
 
-
-# ── MAIN ───────────────────────────────────
 
 def process():
 
@@ -206,7 +195,7 @@ def process():
     now = datetime.now(KYIV_TZ)
 
 
-    for address in ACTIVE_ADDRESSES:
+    for address in ADDRESSES:
 
         log.info("REQUEST %s", address["queue_name"])
 
@@ -222,7 +211,12 @@ def process():
 
         r2=session.post(API_URL,data=payload,headers=headers)
 
-        data=r2.json()
+        try:
+            data=r2.json()
+        except:
+            log.error("JSON ERROR")
+            continue
+
 
         if "fact" not in data:
 
@@ -235,7 +229,11 @@ def process():
 
         today=sorted(fact.keys(),key=int)[0]
 
-        schedule=fact[today][address["queue_code"]]
+        schedule=fact[today].get(address["queue_code"])
+
+        if not schedule:
+            continue
+
 
         intervals=build_intervals(schedule)
 
@@ -247,7 +245,7 @@ def process():
             off_groups.setdefault(key,[]).append(address["queue_name"])
 
 
-        time.sleep(2)
+        time.sleep(6)
 
 
     lines=[]
@@ -283,6 +281,17 @@ def process():
     log.info("OLD HASH %s", old_hash)
 
 
+    if old_hash is None:
+
+        log.info("FIRST RUN -> SAVE STATE")
+
+        save_state(new_hash)
+
+        commit_state()
+
+        return
+
+
     if new_hash==old_hash:
 
         log.info("NO CHANGE")
@@ -296,8 +305,6 @@ def process():
 
     commit_state()
 
-
-# ── START ──────────────────────────────────
 
 if __name__ == "__main__":
 
