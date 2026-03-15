@@ -11,86 +11,72 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
-# ── Logging ─────────────────────────────────
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+
 log = logging.getLogger(__name__)
 
 
-# ── Config ─────────────────────────────────
-
 BASE_URL = "https://www.dtek-krem.com.ua/ua/shutdowns"
-API_URL  = "https://www.dtek-krem.com.ua/ua/ajax"
+API_URL = "https://www.dtek-krem.com.ua/ua/ajax"
 
 BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
-CHAT_ID   = "-1003802691352"
+CHAT_ID = "-1003802691352"
 
 STATE_FILE = "state.txt"
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
-# ── Addresses ─────────────────────────────────
+# ── ADDRESSES ─────────────────────────────
 
 ADDRESSES = [
 
-# {"city": "с. Карапиші",    "street": "вул. Молодіжна 12",          "queue_code": "GPV1.1", "queue_name": "1.1"},
-{"city": "м. Богуслав",    "street": "вул. Теліги Олени",          "queue_code": "GPV1.2", "queue_name": "1.2"},
-{"city": "м. Біла Церква", "street": "вул. Гончара Олеся 2",       "queue_code": "GPV2.1", "queue_name": "2.1"},
+# --- ACTIVE GROUP (chunk 0) ---
 
-# {"city": "м. Біла Церква", "street": "вул. Голуба Професора",      "queue_code": "GPV2.2", "queue_name": "2.2"},
-# {"city": "м. Миронівка",   "street": "вул. Шевченка 2",            "queue_code": "GPV3.1", "queue_name": "3.1"},
-# {"city": "м. Миронівка",   "street": "вул. Зеленого Мирона 13",    "queue_code": "GPV3.2", "queue_name": "3.2"},
-# {"city": "м. Біла Церква", "street": "вул. Рибна 32",              "queue_code": "GPV4.1", "queue_name": "4.1"},
-# {"city": "м. Біла Церква", "street": "вул. Шевченка 4",            "queue_code": "GPV4.2", "queue_name": "4.2"},
+{"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"1.2"},
+{"city":"м. Біла Церква","street":"вул. Гончара Олеся 2","queue_code":"GPV2.1","queue_name":"2.1"},
+{"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"5.1"},
 
-{"city": "м. Біла Церква", "street": "вул. Героїв Небесної Сотні", "queue_code": "GPV5.1", "queue_name": "5.1"},
 
-# {"city": "м. Біла Церква", "street": "вул. Глибочицька 18",        "queue_code": "GPV5.2", "queue_name": "5.2"},
-# {"city": "м. Біла Церква", "street": "вул. Сухоярська 4",          "queue_code": "GPV6.1", "queue_name": "6.1"},
-# {"city": "м. Вишневе",     "street": "вул. Гоголя 2",              "queue_code": "GPV6.2", "queue_name": "6.2"},
+# --- OTHER GROUPS (НЕ використовуються) ---
+
+# {"city":"с. Карапиші","street":"вул. Молодіжна 12","queue_code":"GPV1.1","queue_name":"1.1"},
+# {"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"2.2"},
+# {"city":"м. Миронівка","street":"вул. Шевченка 2","queue_code":"GPV3.1","queue_name":"3.1"},
+# {"city":"м. Миронівка","street":"вул. Зеленого Мирона 13","queue_code":"GPV3.2","queue_name":"3.2"},
+# {"city":"м. Біла Церква","street":"вул. Рибна 32","queue_code":"GPV4.1","queue_name":"4.1"},
+# {"city":"м. Біла Церква","street":"вул. Шевченка 4","queue_code":"GPV4.2","queue_name":"4.2"},
+# {"city":"м. Біла Церква","street":"вул. Глибочицька 18","queue_code":"GPV5.2","queue_name":"5.2"},
+# {"city":"м. Біла Церква","street":"вул. Сухоярська 4","queue_code":"GPV6.1","queue_name":"6.1"},
+# {"city":"м. Вишневе","street":"вул. Гоголя 2","queue_code":"GPV6.2","queue_name":"6.2"},
 
 ]
 
 
-# ── Telegram ─────────────────────────────────
+# ── CHUNK SETTINGS ─────────────────────────
+
+CHUNK_SIZE = 3
+CHUNK = 0
+
+ACTIVE_ADDRESSES = ADDRESSES[CHUNK*CHUNK_SIZE:(CHUNK+1)*CHUNK_SIZE]
+
+
+# ── TELEGRAM ───────────────────────────────
 
 def send_message(text):
 
     r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={
-            "chat_id": CHAT_ID,
-            "text": text
-        }
+        data={"chat_id": CHAT_ID, "text": text}
     )
 
     log.info("Telegram status %s", r.status_code)
 
 
-def get_last_message():
-
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-
-    r = requests.get(url).json()
-
-    if not r["result"]:
-        return None
-
-    for item in reversed(r["result"]):
-
-        msg = item.get("channel_post")
-
-        if msg and str(msg["chat"]["id"]) == CHAT_ID:
-            return msg["text"]
-
-    return None
-
-
-# ── State ─────────────────────────────────
+# ── STATE ──────────────────────────────────
 
 def load_state():
 
@@ -127,7 +113,7 @@ def commit_state():
         log.error("Git push error %s", e)
 
 
-# ── Helpers ─────────────────────────────────
+# ── HELPERS ────────────────────────────────
 
 def format_time(m):
 
@@ -161,13 +147,13 @@ def build_intervals(data):
         if status in ["no","first","second"]:
 
             start = (hour-1)*60
-            end   = hour*60
+            end = hour*60
 
             if status=="first":
-                end = start+30
+                end=start+30
 
             elif status=="second":
-                start +=30
+                start+=30
 
             if current and start==current[1]:
                 current[1]=end
@@ -191,22 +177,24 @@ def build_intervals(data):
     return intervals
 
 
-# ── Main logic ─────────────────────────────────
+# ── MAIN ───────────────────────────────────
 
 def process():
 
-    session = requests.Session()
+    session=requests.Session()
 
-    r1 = session.get(BASE_URL)
+    r1=session.get(BASE_URL)
 
-    csrf = get_csrf(r1.text)
+    csrf=get_csrf(r1.text)
 
     if not csrf:
+
         log.error("CSRF NOT FOUND")
+
         return
 
 
-    headers = {
+    headers={
         "X-CSRF-Token":csrf,
         "X-Requested-With":"XMLHttpRequest",
         "Referer":BASE_URL
@@ -217,7 +205,10 @@ def process():
 
     now = datetime.now(KYIV_TZ)
 
-    for address in ADDRESSES:
+
+    for address in ACTIVE_ADDRESSES:
+
+        log.info("REQUEST %s", address["queue_name"])
 
         payload={
             "method":"getHomeNum",
@@ -233,13 +224,21 @@ def process():
 
         data=r2.json()
 
+        if "fact" not in data:
+
+            log.error("NO FACT FIELD %s", data)
+
+            continue
+
+
         fact=data["fact"]["data"]
 
-        today=sorted(fact.keys())[0]
+        today=sorted(fact.keys(),key=int)[0]
 
         schedule=fact[today][address["queue_code"]]
 
         intervals=build_intervals(schedule)
+
 
         for s,e in intervals:
 
@@ -247,14 +246,18 @@ def process():
 
             off_groups.setdefault(key,[]).append(address["queue_name"])
 
+
         time.sleep(2)
 
 
     lines=[]
 
-    for key,queues in off_groups.items():
+
+    for key in sorted(off_groups.keys()):
 
         s,e=map(int,key.split("-"))
+
+        queues=sorted(off_groups[key])
 
         lines.append(
             f"🔴 {format_time(s)}–{format_time(e)} | черги {', '.join(queues)}"
@@ -270,24 +273,17 @@ def process():
         text="📊 Оновлено графік\n\n🟢 Світло є до кінця доби"
 
 
-    new_hash = hashlib.md5(text.encode()).hexdigest()
+    new_hash=hashlib.md5(text.encode()).hexdigest()
 
-    state_hash = load_state()
-
-    last_message = get_last_message()
-
-    channel_hash = None
-
-    if last_message:
-        channel_hash = hashlib.md5(last_message.encode()).hexdigest()
+    old_hash=load_state()
 
 
     log.info("NEW HASH %s", new_hash)
-    log.info("STATE HASH %s", state_hash)
-    log.info("CHANNEL HASH %s", channel_hash)
+
+    log.info("OLD HASH %s", old_hash)
 
 
-    if new_hash == state_hash or new_hash == channel_hash:
+    if new_hash==old_hash:
 
         log.info("NO CHANGE")
 
@@ -301,7 +297,7 @@ def process():
     commit_state()
 
 
-# ── Start ─────────────────────────────────
+# ── START ──────────────────────────────────
 
 if __name__ == "__main__":
 
