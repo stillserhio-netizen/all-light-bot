@@ -2,29 +2,36 @@ name: Light Bot
 
 on:
   workflow_dispatch:
+
   schedule:
-    - cron: "*/10 * * * *"
+
+    # день (05:00–22:59 local UTC+2)
+    - cron: "*/10 3-20 * * *"
+
+    # 23:00 local
+    - cron: "0 21 * * *"
+
+    # 00:00–04:00 local
+    - cron: "0 22-23 * * *"
+    - cron: "0 0-2 * * *"
 
 permissions:
   contents: write
 
 jobs:
 
-  collect:
+  bot:
+
     runs-on: ubuntu-latest
 
     steps:
 
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install requests
-        run: pip install requests
+      - run: pip install requests
 
-      - name: Run bot
-        run: python bot.py
+      - run: python bot.py
