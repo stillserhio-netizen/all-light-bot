@@ -29,28 +29,23 @@ STATE_FILE = "state.txt"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
-ADDRESSES = [
+# ── ACTIVE QUEUES ─────────────────────────
 
-# {"city":"с. Карапиші","street":"вул. Молодіжна 12","queue_code":"GPV1.1","queue_name":"1.1"},
+QUEUES = {
+    "GPV1.2": "1.2",
+    "GPV2.1": "2.1",
+    "GPV5.1": "5.1",
+}
 
-{"city":"м. Богуслав","street":"вул. Теліги Олени","queue_code":"GPV1.2","queue_name":"1.2"},
 
-{"city":"м. Біла Церква","street":"вул. Гончара Олеся 2","queue_code":"GPV2.1","queue_name":"2.1"},
+# ── ADDRESS ДЛЯ ОДНОГО ЗАПИТУ ────────────
+# (використовується лише щоб отримати JSON)
 
-# {"city":"м. Біла Церква","street":"вул. Голуба Професора","queue_code":"GPV2.2","queue_name":"2.2"},
-# {"city":"м. Миронівка","street":"вул. Шевченка 2","queue_code":"GPV3.1","queue_name":"3.1"},
-# {"city":"м. Миронівка","street":"вул. Зеленого Мирона 13","queue_code":"GPV3.2","queue_name":"3.2"},
-# {"city":"м. Біла Церква","street":"вул. Рибна 32","queue_code":"GPV4.1","queue_name":"4.1"},
-# {"city":"м. Біла Церква","street":"вул. Шевченка 4","queue_code":"GPV4.2","queue_name":"4.2"},
+CITY = "м. Богуслав"
+STREET = "вул. Теліги Олени"
 
-{"city":"м. Біла Церква","street":"вул. Героїв Небесної Сотні","queue_code":"GPV5.1","queue_name":"5.1"},
 
-# {"city":"м. Біла Церква","street":"вул. Глибочицька 18","queue_code":"GPV5.2","queue_name":"5.2"},
-# {"city":"м. Біла Церква","street":"вул. Сухоярська 4","queue_code":"GPV6.1","queue_name":"6.1"},
-# {"city":"м. Вишневе","street":"вул. Гоголя 2","queue_code":"GPV6.2","queue_name":"6.2"},
-
-]
-
+# ── Telegram ─────────────────────────────
 
 def send_message(text):
 
@@ -65,18 +60,20 @@ def send_message(text):
     log.info("Telegram status %s", r.status_code)
 
 
+# ── State ────────────────────────────────
+
 def load_state():
 
     if not os.path.exists(STATE_FILE):
         return None
 
     with open(STATE_FILE) as f:
-        value = f.read().strip()
+        v = f.read().strip()
 
-        if value == "":
+        if v == "":
             return None
 
-        return value
+        return v
 
 
 def save_state(value):
@@ -104,6 +101,8 @@ def commit_state():
 
         log.error("Git push error %s", e)
 
+
+# ── Helpers ──────────────────────────────
 
 def format_time(m):
 
@@ -139,14 +138,13 @@ def build_intervals(data):
             start = (hour-1)*60
             end = hour*60
 
-            if status=="first":
+            if status == "first":
                 end = start+30
 
-            elif status=="second":
+            elif status == "second":
                 start += 30
 
             if current and start == current[1]:
-
                 current[1] = end
 
             else:
@@ -168,9 +166,14 @@ def build_intervals(data):
     return intervals
 
 
+# ── MAIN ─────────────────────────────────
+
 def process():
 
     session=requests.Session()
+
+    # невелика пауза щоб не банив DTEK
+    time.sleep(5)
 
     r1=session.get(BASE_URL)
 
@@ -190,62 +193,57 @@ def process():
     }
 
 
+    payload={
+        "method":"getHomeNum",
+        "data[0][name]":"city",
+        "data[0][value]":CITY,
+        "data[1][name]":"street",
+        "data[1][value]":STREET,
+        "data[2][name]":"updateFact",
+        "data[2][value]":datetime.now(KYIV_TZ).strftime("%H:%M %d.%m.%Y")
+    }
+
+
+    r2=session.post(API_URL,data=payload,headers=headers)
+
+    try:
+        data=r2.json()
+    except:
+        log.error("JSON ERROR")
+        return
+
+
+    if "fact" not in data:
+
+        log.error("NO FACT FIELD %s", data)
+
+        return
+
+
+    fact=data["fact"]["data"]
+
+    today=sorted(fact.keys(),key=int)[0]
+
+    schedule=fact[today]
+
+
     off_groups={}
 
-    now = datetime.now(KYIV_TZ)
 
+    for code,name in QUEUES.items():
 
-    for address in ADDRESSES:
+        queue_data=schedule.get(code)
 
-        log.info("REQUEST %s", address["queue_name"])
-
-        payload={
-            "method":"getHomeNum",
-            "data[0][name]":"city",
-            "data[0][value]":address["city"],
-            "data[1][name]":"street",
-            "data[1][value]":address["street"],
-            "data[2][name]":"updateFact",
-            "data[2][value]":now.strftime("%H:%M %d.%m.%Y")
-        }
-
-        r2=session.post(API_URL,data=payload,headers=headers)
-
-        try:
-            data=r2.json()
-        except:
-            log.error("JSON ERROR")
+        if not queue_data:
             continue
 
-
-        if "fact" not in data:
-
-            log.error("NO FACT FIELD %s", data)
-
-            continue
-
-
-        fact=data["fact"]["data"]
-
-        today=sorted(fact.keys(),key=int)[0]
-
-        schedule=fact[today].get(address["queue_code"])
-
-        if not schedule:
-            continue
-
-
-        intervals=build_intervals(schedule)
-
+        intervals=build_intervals(queue_data)
 
         for s,e in intervals:
 
             key=f"{s}-{e}"
 
-            off_groups.setdefault(key,[]).append(address["queue_name"])
-
-
-        time.sleep(6)
+            off_groups.setdefault(key,[]).append(name)
 
 
     lines=[]
@@ -292,7 +290,7 @@ def process():
         return
 
 
-    if new_hash==old_hash:
+    if new_hash == old_hash:
 
         log.info("NO CHANGE")
 
