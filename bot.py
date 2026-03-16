@@ -29,8 +29,6 @@ STATE_FILE = "state.txt"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
-# порядок опитування
-
 QUEUES = [
 
     ("GPV1.2","1.2","м. Богуслав","вул. Теліги Олени"),
@@ -39,8 +37,6 @@ QUEUES = [
 
 ]
 
-
-# ─── Telegram
 
 def send_message(text):
 
@@ -55,7 +51,24 @@ def send_message(text):
     log.info("Telegram status %s", r.status_code)
 
 
-# ─── State
+def get_last_message():
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+
+    r = requests.get(url).json()
+
+    if not r["result"]:
+        return None
+
+    for item in reversed(r["result"]):
+
+        msg = item.get("channel_post")
+
+        if msg and str(msg["chat"]["id"]) == CHAT_ID:
+            return msg["text"]
+
+    return None
+
 
 def load_state():
 
@@ -91,8 +104,6 @@ def commit_state():
 
     log.info("STATE PUSHED")
 
-
-# ─── Helpers
 
 def format_time(m):
 
@@ -157,16 +168,14 @@ def build_intervals(data):
     return intervals
 
 
-# ─── Main
-
 def process():
 
     session=requests.Session()
 
     browser_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "uk-UA,uk;q=0.9"
     }
 
     r1=session.get(BASE_URL,headers=browser_headers)
@@ -175,7 +184,7 @@ def process():
 
     if not csrf:
 
-        log.warning("CSRF NOT FOUND, retry")
+        log.warning("CSRF NOT FOUND retry")
 
         time.sleep(3)
 
@@ -203,8 +212,6 @@ def process():
     lines=[]
 
 
-    # опитування по черзі
-
     for code,name,city,street in QUEUES:
 
         log.info("REQUEST %s",name)
@@ -225,11 +232,8 @@ def process():
 
         if "fact" not in data:
 
-            log.error("NO FACT FIELD %s",data)
-
-            lines.append(
-                f"Черга {name}\n🟢 Світло є до кінця доби"
-            )
+            lines.append(f"Черга {name}")
+            lines.append("🟢Світло є до кінця доби")
 
             time.sleep(8)
             continue
@@ -242,11 +246,12 @@ def process():
         schedule=fact[today].get(code)
 
 
+        lines.append(f"Черга {name}")
+
+
         if not schedule:
 
-            lines.append(
-                f"Черга {name}\n🟢 Світло є до кінця доби"
-            )
+            lines.append("🟢Світло є до кінця доби")
 
             time.sleep(8)
             continue
@@ -257,43 +262,42 @@ def process():
 
         if not intervals:
 
-            lines.append(
-                f"Черга {name}\n🟢 Світло є до кінця доби"
-            )
+            lines.append("🟢Світло є до кінця доби")
 
         else:
 
-            txt=[]
-
             for s,e in intervals:
 
-                txt.append(
-                    f"🔴 {format_time(s)}–{format_time(e)}"
+                lines.append(
+                    f"🔴{format_time(s)}-{format_time(e)}"
                 )
-
-            lines.append(
-                f"Черга {name}\n"+"\n".join(txt)
-            )
 
 
         time.sleep(8)
 
 
-    text="📊 Оновлено графік\n\n"+ "\n\n".join(lines)
+    text="📊Оновлено графік\n\n"+"\n".join(lines)
 
 
     new_hash=hashlib.md5(text.encode()).hexdigest()
 
     old_hash=load_state()
 
+    last_message=get_last_message()
+
 
     log.info("NEW HASH %s",new_hash)
     log.info("OLD HASH %s",old_hash)
 
 
-    if old_hash is None:
+    if last_message == text:
 
-        log.info("FIRST RUN")
+        log.info("SAME AS CHANNEL MESSAGE")
+
+        return
+
+
+    if old_hash is None:
 
         save_state(new_hash)
         commit_state()
@@ -301,7 +305,7 @@ def process():
         return
 
 
-    if new_hash==old_hash:
+    if new_hash == old_hash:
 
         log.info("NO CHANGE")
 
