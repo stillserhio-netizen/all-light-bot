@@ -1,10 +1,10 @@
 import requests
 import re
 import hashlib
-import time
 import os
 import logging
 import subprocess
+import time
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -29,18 +29,18 @@ STATE_FILE = "state.txt"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
-QUEUES = {
-    "GPV1.2": "1.2",
-    "GPV2.1": "2.1",
-    "GPV5.1": "5.1",
-}
+# ───── ЧЕРГИ ─────
+
+QUEUES = [
+
+    ("GPV1.2","1.2","м. Богуслав","вул. Теліги Олени"),
+    ("GPV2.1","2.1","м. Біла Церква","вул. Гончара Олеся 2"),
+    ("GPV5.1","5.1","м. Біла Церква","вул. Героїв Небесної Сотні"),
+
+]
 
 
-CITY = "м. Богуслав"
-STREET = "вул. Теліги Олени"
-
-
-# ── Telegram ─────────────────
+# ───── TELEGRAM ─────
 
 def send_message(text):
 
@@ -55,7 +55,7 @@ def send_message(text):
     log.info("Telegram status %s", r.status_code)
 
 
-# ── State ─────────────────
+# ───── STATE ─────
 
 def load_state():
 
@@ -63,7 +63,6 @@ def load_state():
         return None
 
     with open(STATE_FILE) as f:
-
         v = f.read().strip()
 
         if v == "":
@@ -72,33 +71,27 @@ def load_state():
         return v
 
 
-def save_state(value):
+def save_state(v):
 
-    with open(STATE_FILE, "w") as f:
-        f.write(value)
+    with open(STATE_FILE,"w") as f:
+        f.write(v)
 
     log.info("STATE SAVED")
 
 
 def commit_state():
 
-    try:
+    subprocess.run(["git","config","--global","user.name","bot"])
+    subprocess.run(["git","config","--global","user.email","bot@bot"])
 
-        subprocess.run(["git","config","--global","user.name","bot"])
-        subprocess.run(["git","config","--global","user.email","bot@bot"])
+    subprocess.run(["git","add","state.txt"])
+    subprocess.run(["git","commit","-m","update state"],check=False)
+    subprocess.run(["git","push"],check=False)
 
-        subprocess.run(["git","add","state.txt"])
-        subprocess.run(["git","commit","-m","update state"], check=False)
-        subprocess.run(["git","push"], check=False)
-
-        log.info("STATE PUSHED TO GIT")
-
-    except Exception as e:
-
-        log.error("Git push error %s", e)
+    log.info("STATE PUSHED")
 
 
-# ── Helpers ─────────────────
+# ───── HELPERS ─────
 
 def format_time(m):
 
@@ -107,12 +100,12 @@ def format_time(m):
 
 def get_csrf(html):
 
-    m = re.search(r'csrf-token" content="([^"]+)"', html)
+    m = re.search(r'csrf-token" content="([^"]+)"',html)
 
     if m:
         return m.group(1)
 
-    m = re.search(r'content="([^"]+)" name="csrf-token"', html)
+    m = re.search(r'content="([^"]+)" name="csrf-token"',html)
 
     if m:
         return m.group(1)
@@ -122,27 +115,27 @@ def get_csrf(html):
 
 def build_intervals(data):
 
-    intervals = []
-    current = None
+    intervals=[]
+    current=None
 
     for hour in range(1,25):
 
-        status = data.get(str(hour))
+        status=data.get(str(hour))
 
         if status in ["no","first","second"]:
 
-            start = (hour-1)*60
-            end = hour*60
+            start=(hour-1)*60
+            end=hour*60
 
-            if status == "first":
-                end = start+30
+            if status=="first":
+                end=start+30
 
-            elif status == "second":
-                start += 30
+            elif status=="second":
+                start+=30
 
-            if current and start == current[1]:
+            if current and start==current[1]:
 
-                current[1] = end
+                current[1]=end
 
             else:
 
@@ -163,43 +156,11 @@ def build_intervals(data):
     return intervals
 
 
-# ── Schedule control ─────────────────
-
-def allowed_to_run():
-
-    now = datetime.now(KYIV_TZ)
-
-    hour = now.hour
-    minute = now.minute
-
-    log.info("LOCAL TIME %02d:%02d", hour, minute)
-
-    # день → кожні 10 хв
-    if 5 <= hour < 22:
-
-        return True
-
-    # ніч → лише раз на годину
-    if minute != 0:
-
-        log.info("NIGHT MODE SKIP")
-
-        return False
-
-    return True
-
-
-# ── Main ─────────────────
+# ───── MAIN ─────
 
 def process():
 
-    if not allowed_to_run():
-        return
-
-
     session=requests.Session()
-
-    time.sleep(5)
 
     r1=session.get(BASE_URL)
 
@@ -219,51 +180,49 @@ def process():
     }
 
 
-    payload={
-        "method":"getHomeNum",
-        "data[0][name]":"city",
-        "data[0][value]":CITY,
-        "data[1][name]":"street",
-        "data[1][value]":STREET,
-        "data[2][name]":"updateFact",
-        "data[2][value]":datetime.now(KYIV_TZ).strftime("%H:%M %d.%m.%Y")
-    }
-
-
-    r2=session.post(API_URL,data=payload,headers=headers)
-
-    try:
-        data=r2.json()
-    except:
-        log.error("JSON ERROR")
-        return
-
-
-    if "fact" not in data:
-
-        log.error("NO FACT FIELD %s", data)
-
-        return
-
-
-    fact=data["fact"]["data"]
-
-    today=sorted(fact.keys(),key=int)[0]
-
-    schedule=fact[today]
-
-
     off_groups={}
 
+    now=datetime.now(KYIV_TZ)
 
-    for code,name in QUEUES.items():
 
-        queue_data=schedule.get(code)
+    # ОПИТУЄМО ПО ЧЕРЗІ
 
-        if not queue_data:
+    for code,name,city,street in QUEUES:
+
+        log.info("REQUEST %s",name)
+
+        payload={
+            "method":"getHomeNum",
+            "data[0][name]":"city",
+            "data[0][value]":city,
+            "data[1][name]":"street",
+            "data[1][value]":street,
+            "data[2][name]":"updateFact",
+            "data[2][value]":now.strftime("%H:%M %d.%m.%Y")
+        }
+
+        r2=session.post(API_URL,data=payload,headers=headers)
+
+        data=r2.json()
+
+        if "fact" not in data:
+
+            log.error("NO FACT FIELD %s",data)
+
             continue
 
-        intervals=build_intervals(queue_data)
+
+        fact=data["fact"]["data"]
+
+        today=sorted(fact.keys(),key=int)[0]
+
+        schedule=fact[today].get(code)
+
+        if not schedule:
+            continue
+
+
+        intervals=build_intervals(schedule)
 
         for s,e in intervals:
 
@@ -272,10 +231,13 @@ def process():
             off_groups.setdefault(key,[]).append(name)
 
 
+        time.sleep(8)   # важливо
+
+
     lines=[]
 
 
-    for key in sorted(off_groups.keys()):
+    for key in sorted(off_groups.keys(),key=lambda x:int(x.split("-")[0])):
 
         s,e=map(int,key.split("-"))
 
@@ -300,17 +262,15 @@ def process():
     old_hash=load_state()
 
 
-    log.info("NEW HASH %s", new_hash)
-
-    log.info("OLD HASH %s", old_hash)
+    log.info("NEW HASH %s",new_hash)
+    log.info("OLD HASH %s",old_hash)
 
 
     if old_hash is None:
 
-        log.info("FIRST RUN -> SAVE STATE")
+        log.info("FIRST RUN")
 
         save_state(new_hash)
-
         commit_state()
 
         return
