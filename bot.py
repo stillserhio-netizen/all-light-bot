@@ -29,8 +29,7 @@ STATE_FILE = "state.txt"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
-# ───── ЧЕРГИ ─────
-
+# порядок опитування
 QUEUES = [
 
     ("GPV1.2","1.2","м. Богуслав","вул. Теліги Олени"),
@@ -40,22 +39,19 @@ QUEUES = [
 ]
 
 
-# ───── TELEGRAM ─────
+# ── Telegram
 
 def send_message(text):
 
     r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={
-            "chat_id": CHAT_ID,
-            "text": text
-        }
+        data={"chat_id":CHAT_ID,"text":text}
     )
 
     log.info("Telegram status %s", r.status_code)
 
 
-# ───── STATE ─────
+# ── State
 
 def load_state():
 
@@ -63,9 +59,10 @@ def load_state():
         return None
 
     with open(STATE_FILE) as f:
-        v = f.read().strip()
 
-        if v == "":
+        v=f.read().strip()
+
+        if v=="":
             return None
 
         return v
@@ -91,7 +88,7 @@ def commit_state():
     log.info("STATE PUSHED")
 
 
-# ───── HELPERS ─────
+# ── Helpers
 
 def format_time(m):
 
@@ -100,12 +97,12 @@ def format_time(m):
 
 def get_csrf(html):
 
-    m = re.search(r'csrf-token" content="([^"]+)"',html)
+    m=re.search(r'csrf-token" content="([^"]+)"',html)
 
     if m:
         return m.group(1)
 
-    m = re.search(r'content="([^"]+)" name="csrf-token"',html)
+    m=re.search(r'content="([^"]+)" name="csrf-token"',html)
 
     if m:
         return m.group(1)
@@ -156,7 +153,7 @@ def build_intervals(data):
     return intervals
 
 
-# ───── MAIN ─────
+# ── Main
 
 def process():
 
@@ -180,12 +177,12 @@ def process():
     }
 
 
-    off_groups={}
-
     now=datetime.now(KYIV_TZ)
 
+    lines=[]
 
-    # ОПИТУЄМО ПО ЧЕРЗІ
+
+    # опитування строго по порядку
 
     for code,name,city,street in QUEUES:
 
@@ -209,6 +206,8 @@ def process():
 
             log.error("NO FACT FIELD %s",data)
 
+            lines.append(f"Черга {name}\n🟢 Світло є до кінця доби")
+
             continue
 
 
@@ -218,43 +217,40 @@ def process():
 
         schedule=fact[today].get(code)
 
+
         if not schedule:
+
+            lines.append(f"Черга {name}\n🟢 Світло є до кінця доби")
+
             continue
 
 
         intervals=build_intervals(schedule)
 
-        for s,e in intervals:
 
-            key=f"{s}-{e}"
+        if not intervals:
 
-            off_groups.setdefault(key,[]).append(name)
+            lines.append(f"Черга {name}\n🟢 Світло є до кінця доби")
 
+        else:
 
-        time.sleep(8)   # важливо
+            txt=[]
 
+            for s,e in intervals:
 
-    lines=[]
+                txt.append(
+                    f"🔴 {format_time(s)}–{format_time(e)}"
+                )
 
-
-    for key in sorted(off_groups.keys(),key=lambda x:int(x.split("-")[0])):
-
-        s,e=map(int,key.split("-"))
-
-        queues=sorted(off_groups[key])
-
-        lines.append(
-            f"🔴 {format_time(s)}–{format_time(e)} | черги {', '.join(queues)}"
-        )
+            lines.append(
+                f"Черга {name}\n"+"\n".join(txt)
+            )
 
 
-    if lines:
+        time.sleep(8)
 
-        text="📊 Оновлено графік\n\n"+ "\n".join(lines)
 
-    else:
-
-        text="📊 Оновлено графік\n\n🟢 Світло є до кінця доби"
+    text="📊 Оновлено графік\n\n"+ "\n\n".join(lines)
 
 
     new_hash=hashlib.md5(text.encode()).hexdigest()
@@ -276,7 +272,7 @@ def process():
         return
 
 
-    if new_hash == old_hash:
+    if new_hash==old_hash:
 
         log.info("NO CHANGE")
 
@@ -290,6 +286,6 @@ def process():
     commit_state()
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
 
     process()
