@@ -30,6 +30,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
 # порядок опитування
+
 QUEUES = [
 
     ("GPV1.2","1.2","м. Богуслав","вул. Теліги Олени"),
@@ -39,19 +40,22 @@ QUEUES = [
 ]
 
 
-# ── Telegram
+# ─── Telegram
 
 def send_message(text):
 
     r = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id":CHAT_ID,"text":text}
+        data={
+            "chat_id": CHAT_ID,
+            "text": text
+        }
     )
 
     log.info("Telegram status %s", r.status_code)
 
 
-# ── State
+# ─── State
 
 def load_state():
 
@@ -60,9 +64,9 @@ def load_state():
 
     with open(STATE_FILE) as f:
 
-        v=f.read().strip()
+        v = f.read().strip()
 
-        if v=="":
+        if v == "":
             return None
 
         return v
@@ -88,7 +92,7 @@ def commit_state():
     log.info("STATE PUSHED")
 
 
-# ── Helpers
+# ─── Helpers
 
 def format_time(m):
 
@@ -97,12 +101,12 @@ def format_time(m):
 
 def get_csrf(html):
 
-    m=re.search(r'csrf-token" content="([^"]+)"',html)
+    m = re.search(r'csrf-token" content="([^"]+)"',html)
 
     if m:
         return m.group(1)
 
-    m=re.search(r'content="([^"]+)" name="csrf-token"',html)
+    m = re.search(r'content="([^"]+)" name="csrf-token"',html)
 
     if m:
         return m.group(1)
@@ -153,27 +157,44 @@ def build_intervals(data):
     return intervals
 
 
-# ── Main
+# ─── Main
 
 def process():
 
     session=requests.Session()
 
-    r1=session.get(BASE_URL)
+    browser_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8"
+    }
+
+    r1=session.get(BASE_URL,headers=browser_headers)
 
     csrf=get_csrf(r1.text)
 
     if not csrf:
 
-        log.error("CSRF NOT FOUND")
+        log.warning("CSRF NOT FOUND, retry")
 
-        return
+        time.sleep(3)
+
+        r1=session.get(BASE_URL,headers=browser_headers)
+
+        csrf=get_csrf(r1.text)
+
+        if not csrf:
+
+            log.error("CSRF STILL NOT FOUND")
+
+            return
 
 
     headers={
         "X-CSRF-Token":csrf,
         "X-Requested-With":"XMLHttpRequest",
-        "Referer":BASE_URL
+        "Referer":BASE_URL,
+        "User-Agent":browser_headers["User-Agent"]
     }
 
 
@@ -182,7 +203,7 @@ def process():
     lines=[]
 
 
-    # опитування строго по порядку
+    # опитування по черзі
 
     for code,name,city,street in QUEUES:
 
@@ -206,8 +227,11 @@ def process():
 
             log.error("NO FACT FIELD %s",data)
 
-            lines.append(f"Черга {name}\n🟢 Світло є до кінця доби")
+            lines.append(
+                f"Черга {name}\n🟢 Світло є до кінця доби"
+            )
 
+            time.sleep(8)
             continue
 
 
@@ -220,8 +244,11 @@ def process():
 
         if not schedule:
 
-            lines.append(f"Черга {name}\n🟢 Світло є до кінця доби")
+            lines.append(
+                f"Черга {name}\n🟢 Світло є до кінця доби"
+            )
 
+            time.sleep(8)
             continue
 
 
@@ -230,7 +257,9 @@ def process():
 
         if not intervals:
 
-            lines.append(f"Черга {name}\n🟢 Світло є до кінця доби")
+            lines.append(
+                f"Черга {name}\n🟢 Світло є до кінця доби"
+            )
 
         else:
 
