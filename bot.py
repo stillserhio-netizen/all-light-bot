@@ -31,7 +31,7 @@ QUEUE_LABELS = {
     "6.1": "6.1", "6.2": "6.2",
 }
 
-QUEUE_BLOCK_RE = re.compile(r"^Черга ([\w.]+) — (сьогодні|завтра) \(([^)]+)\)$")
+QUEUE_BLOCK_RE = re.compile(r"^Черга ([\w.]+) — (\d{2}\.\d{2}\.\d{4})$")
 
 
 def split_message(message, max_length=3500):
@@ -106,6 +106,15 @@ def load_state():
 
     log.warning("State file has an unrecognized format; treating it as missing")
     return None
+
+
+def add_update_time(message):
+    now = datetime.now(KYIV_TZ)
+    return f"{message}\\n\\n🕒 Час оновлення: {now.strftime('%d.%m.%Y о %H:%M')}"
+
+
+def display_date(date_value):
+    return datetime.fromisoformat(date_value).strftime("%d.%m.%Y")
 
 
 def save_state(value, message):
@@ -216,11 +225,15 @@ def outage_intervals(day_map):
     return intervals, "unknown" in slots
 
 
-def format_day(queue, day_label, date_value, day_map):
-    intervals, has_unknown = outage_intervals(day_map)
-    lines = [f"Черга {queue} — {day_label} ({date_value})"]
+def has_schedule_data(day_map):
+    return any(status in ("on", "off") for status in get_slots(day_map))
 
-    if not day_map or not get_slots(day_map):
+
+def format_day(queue, date_value, day_map):
+    intervals, has_unknown = outage_intervals(day_map)
+    lines = [f"Черга {queue} — {display_date(date_value)}"]
+
+    if not has_schedule_data(day_map):
         lines.append("⚪ Немає даних")
         return lines
 
@@ -242,13 +255,10 @@ def format_day(queue, day_label, date_value, day_map):
 def build_message(payload):
     region = find_region(payload)
     schedule = region.get("schedule") or {}
-    today = payload.get("date_today")
-    tomorrow = payload.get("date_tomorrow")
-
-    if not today:
-        today = datetime.now(KYIV_TZ).date().isoformat()
-    if not tomorrow:
-        tomorrow = (datetime.fromisoformat(today).date() + timedelta(days=1)).isoformat()
+    today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
+    tomorrow = payload.get("date_tomorrow") or (
+        datetime.fromisoformat(today).date() + timedelta(days=1)
+    ).isoformat()
 
     queues = sorted(
         schedule.keys(),
@@ -260,51 +270,51 @@ def build_message(payload):
     if not queues:
         raise ValueError(f"No queues found for region {REGION_ID}")
 
+    tomorrow_exists = any(
+        has_schedule_data((schedule.get(queue) or {}).get(tomorrow))
+        for queue in queues
+    )
     lines = ["💡 Графік відключень — Київська область", ""]
 
     for raw_queue in queues:
         label = queue_label(raw_queue)
         queue_schedule = schedule.get(raw_queue) or {}
-        lines.extend(format_day(label, "сьогодні", today, queue_schedule.get(today)))
-        lines.append("")
-        lines.extend(format_day(label, "завтра", tomorrow, queue_schedule.get(tomorrow)))
-        lines.append("")
+        today_map = queue_schedule.get(today)
+        if has_schedule_data(today_map):
+            lines.extend(format_day(label, today, today_map))
+            lines.append("")
+        if tomorrow_exists:
+            tomorrow_map = queue_schedule.get(tomorrow)
+            if has_schedule_data(tomorrow_map):
+                lines.extend(format_day(label, tomorrow, tomorrow_map))
+                lines.append("")
 
     lines.append("Джерело даних: https://svitlo.live/kiivska-oblast")
-    return "\n".join(lines).strip()
+    return "\\n".join(lines).strip()
 
 
 def extract_queue_blocks(message):
-    """Return queue/day sections, ignoring dates in section keys for clean day-to-day diffs."""
     blocks = {}
     current_key = None
-    current_date = None
     current_lines = []
 
     def store_current():
         if current_key is not None:
-            blocks[current_key] = {
-                "date": current_date,
-                "body": "\n".join(current_lines).strip() or "⚪ Немає даних",
-            }
+            blocks[current_key] = "\\n".join(current_lines).strip() or "⚪ Немає даних"
 
     for line in message.splitlines():
         match = QUEUE_BLOCK_RE.match(line)
         if match:
             store_current()
-            queue, day_label, date_value = match.groups()
-            current_key = (queue, day_label)
-            current_date = date_value
+            current_key = match.groups()
             current_lines = []
         elif current_key is not None:
             if not line.strip():
                 store_current()
                 current_key = None
-                current_date = None
                 current_lines = []
             else:
                 current_lines.append(line)
-
     store_current()
     return blocks
 
@@ -315,33 +325,25 @@ def build_change_message(old_message, new_message):
     changes = []
 
     for key in sorted(set(old_blocks) | set(new_blocks)):
-        old_block = old_blocks.get(key)
-        new_block = new_blocks.get(key)
-        queue, day_label = key
-        if old_block and new_block and old_block["body"] == new_block["body"]:
+        old_body = old_blocks.get(key)
+        new_body = new_blocks.get(key)
+        if old_body == new_body:
             continue
-
-        old_date = old_block["date"] if old_block else "—"
-        new_date = new_block["date"] if new_block else "—"
-        old_body = old_block["body"] if old_block else "⚪ Даних раніше не було"
-        new_body = new_block["body"] if new_block else "⚪ Цей розділ відсутній у новому графіку"
-
+        queue, date_value = key
+        old_text = old_body if old_body is not None else "⚪ Даних раніше не було"
+        new_text = new_body if new_body is not None else "⚪ Цього графіка більше немає в нових даних"
         changes.extend([
-            f"Черга {queue} — {day_label}",
-            f"Було ({old_date}):",
-            *[f"  {line}" for line in old_body.splitlines()],
-            f"Стало ({new_date}):",
-            *[f"  {line}" for line in new_body.splitlines()],
+            f"Черга {queue} — {date_value}",
+            "Було:",
+            *[f"  {line}" for line in old_text.splitlines()],
+            "Стало:",
+            *[f"  {line}" for line in new_text.splitlines()],
             "",
         ])
 
-    if changes:
-        return "🔔 Зміни графіка — Київська область\n\n" + "\n".join(changes).strip()
-
-    return (
-        "🔔 Оновлення графіка — Київська область\n"
-        "Дати графіка оновилися, але інтервали відключень у чергах не змінилися."
-    )
+    if not changes:
+        return "🔔 Оновлення графіка — Київська область\\nЗмінився лише набір дат у джерелі; інтервали відключень не змінилися."
+    return "🔔 Зміни графіка — Київська область\\n\\n" + "\\n".join(changes).strip()
 
 
 def process():
@@ -379,8 +381,8 @@ def process():
         )
 
     # Required order: first changes, then the complete current schedule.
-    send_message(change_message)
-    send_message(message)
+    send_message(add_update_time(change_message))
+    send_message(add_update_time(message))
     # Save only after Telegram accepts both messages.
     save_state(new_hash, message)
     commit_state()
