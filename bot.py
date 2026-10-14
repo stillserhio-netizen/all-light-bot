@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import logging
@@ -20,6 +21,9 @@ log = logging.getLogger(__name__)
 API_URL = "https://dtek-api.svitlo-proxy.workers.dev/"
 REGION_ID = "kiivska-oblast"
 STATE_FILE = "state.txt"
+GITHUB_STATE_API = "https://api.github.com/repos/stillserhio-netizen/all-light-bot/contents/state.json"
+GITHUB_STATE_BRANCH = "main"
+GITHUB_STATE_TOKEN = os.environ.get("GITHUB_STATE_TOKEN", "").strip()
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
 CHAT_ID = "-1003802691352"
@@ -82,7 +86,46 @@ def send_message(text):
         log.info("Telegram message part %s/%s sent", index, len(chunks))
 
 
+def state_request_headers():
+    if not GITHUB_STATE_TOKEN:
+        return None
+    return {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {GITHUB_STATE_TOKEN}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "all-light-bot",
+    }
+
+
 def load_state():
+    headers = state_request_headers()
+    if headers:
+        response = requests.get(
+            GITHUB_STATE_API,
+            headers=headers,
+            params={"ref": GITHUB_STATE_BRANCH},
+            timeout=HTTP_TIMEOUT,
+        )
+        if response.status_code == 404:
+            log.info("Persistent GitHub state file does not exist yet")
+            return None
+        response.raise_for_status()
+        payload = response.json()
+        raw = base64.b64decode(payload["content"]).decode("utf-8").strip()
+        if not raw:
+            return None
+        state = json.loads(raw)
+        if not isinstance(state, dict) or not isinstance(state.get("hash"), str):
+            raise ValueError("GitHub state.json has an invalid format")
+        return {
+            "hash": state["hash"],
+            "message": state.get("message") if isinstance(state.get("message"), str) else None,
+            "legacy": False,
+            "backend": "github",
+            "sha": payload["sha"],
+        }
+
+    log.warning("GITHUB_STATE_TOKEN is not configured; using temporary local state")
     try:
         with open(STATE_FILE, encoding="utf-8") as file:
             value = file.read().strip()
@@ -92,7 +135,6 @@ def load_state():
     if not value:
         return None
 
-    # Backward compatibility: previous versions stored only the SHA-256 hash.
     try:
         state = json.loads(value)
         if isinstance(state, dict) and isinstance(state.get("hash"), str):
@@ -100,15 +142,44 @@ def load_state():
                 "hash": state["hash"],
                 "message": state.get("message") if isinstance(state.get("message"), str) else None,
                 "legacy": False,
+                "backend": "local",
             }
     except json.JSONDecodeError:
         pass
 
     if re.fullmatch(r"[0-9a-f]{64}", value):
-        return {"hash": value, "message": None, "legacy": True}
+        return {"hash": value, "message": None, "legacy": True, "backend": "local"}
 
-    log.warning("State file has an unrecognized format; treating it as missing")
+    log.warning("Local state file has an unrecognized format; treating it as missing")
     return None
+
+
+def save_state(value, message, old_state=None):
+    state = {"hash": value, "message": message}
+    headers = state_request_headers()
+    if headers:
+        payload = {
+            "message": "Update persistent schedule state",
+            "branch": GITHUB_STATE_BRANCH,
+            "content": base64.b64encode(
+                json.dumps(state, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).decode("ascii"),
+        }
+        if old_state and old_state.get("backend") == "github" and old_state.get("sha"):
+            payload["sha"] = old_state["sha"]
+        response = requests.put(
+            GITHUB_STATE_API,
+            headers=headers,
+            json=payload,
+            timeout=HTTP_TIMEOUT,
+        )
+        response.raise_for_status()
+        log.info("Persistent schedule state saved to GitHub")
+        return
+
+    with open(STATE_FILE, "w", encoding="utf-8") as file:
+        json.dump(state, file, ensure_ascii=False, separators=(",", ":"))
+    log.warning("Schedule state saved locally only; configure GITHUB_STATE_TOKEN for persistence")
 
 
 def add_update_time(message):
@@ -339,14 +410,14 @@ def process():
 
     # First successful run only establishes the baseline; do not publish.
     if old_state is None:
-        save_state(new_hash, message)
+        save_state(new_hash, message, old_state)
         log.info("Initial schedule baseline saved; nothing published")
         return
 
     # No change: update stored text if needed, but do not send to Telegram.
     if old_state["hash"] == new_hash:
         if old_state.get("message") != message or old_state.get("legacy"):
-            save_state(new_hash, message)
+            save_state(new_hash, message, old_state)
         log.info("Schedule unchanged; no Telegram messages sent")
         return
 
@@ -364,8 +435,8 @@ def process():
     send_message(add_update_time(message))
 
     # Save only after both messages were sent successfully.
-    save_state(new_hash, message)
-    log.info("Schedule changed; change notice and full schedule sent; state saved locally")
+    save_state(new_hash, message, old_state)
+    log.info("Schedule changed; change notice and full schedule sent; state saved")
 
 
 class HealthHandler(BaseHTTPRequestHandler):
