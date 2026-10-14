@@ -289,7 +289,6 @@ def build_message(payload):
                 lines.extend(format_day(label, tomorrow, tomorrow_map))
                 lines.append("")
 
-    lines.append("Джерело даних: https://svitlo.live/kiivska-oblast")
     return "\n".join(lines).strip()
 
 
@@ -354,33 +353,26 @@ def process():
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
 
-    # First run or migration from hash-only state: save baseline without a false alert.
-    if old_state is None or old_state.get("legacy"):
-        save_state(new_hash, message)
-        commit_state()
-        log.info("Initial schedule state saved; no Telegram message sent")
-        return
+    # Publish the current complete schedule every run, even if it did not change.
+    # Keep the comparison alert first when an earlier state exists and changed.
+    if old_state is not None and not old_state.get("legacy") and old_state["hash"] != new_hash:
+        old_message = old_state.get("message")
+        if old_message:
+            change_message = build_change_message(old_message, message)
+        else:
+            change_message = (
+                "🔔 Зміни графіка — Київська область\n"
+                "Попередній текст графіка недоступний для порівняння."
+            )
+        send_message(add_update_time(change_message))
 
-    if old_state["hash"] == new_hash:
-        log.info("No schedule changes; state remains current")
-        return
-
-    old_message = old_state.get("message")
-    if old_message:
-        change_message = build_change_message(old_message, message)
-    else:
-        change_message = (
-            "🔔 Зміни графіка — Київська область\n"
-            "Попередній текст графіка недоступний для порівняння."
-        )
-
-    # Send the change summary first, then the full current schedule.
-    send_message(add_update_time(change_message))
+    # Always send the full current schedule to the channel.
     send_message(add_update_time(message))
 
-    # Save state only after both Telegram messages are accepted.
+    # First run simply establishes the baseline; state is saved after successful send.
     save_state(new_hash, message)
     commit_state()
+    log.info("Full schedule sent; state saved")
 
 
 if __name__ == "__main__":
