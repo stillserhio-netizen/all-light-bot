@@ -1,9 +1,12 @@
 import hashlib
 import json
 import logging
+import os
 import re
-import subprocess
+import threading
+import time
 from datetime import datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
 import requests
@@ -121,25 +124,6 @@ def save_state(value, message):
     state = {"hash": value, "message": message}
     with open(STATE_FILE, "w", encoding="utf-8") as file:
         json.dump(state, file, ensure_ascii=False, separators=(",", ":"))
-
-
-def commit_state():
-    subprocess.run(["git", "config", "user.name", "light-bot"], check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "light-bot@users.noreply.github.com"],
-        check=True,
-    )
-    subprocess.run(["git", "add", STATE_FILE], check=True)
-    result = subprocess.run(["git", "diff", "--cached", "--quiet"], check=False)
-    if result.returncode == 0:
-        log.info("State file unchanged; no commit needed")
-        return
-    subprocess.run(
-        ["git", "commit", "-m", "Update light schedule state"],
-        check=True,
-    )
-    subprocess.run(["git", "push"], check=True)
-    log.info("State committed and pushed")
 
 
 def fetch_schedule_data():
@@ -371,9 +355,55 @@ def process():
 
     # First run simply establishes the baseline; state is saved after successful send.
     save_state(new_hash, message)
-    commit_state()
-    log.info("Full schedule sent; state saved")
+    log.info("Full schedule sent; state saved locally")
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path not in ("/", "/health"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = b"all-light-bot is running"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format_string, *args):
+        log.info("HTTP %s - %s", self.address_string(), format_string % args)
+
+
+def seconds_until_next_run(now):
+    """Align checks to quarter-hours from 06:00–23:59 Kyiv time and hourly overnight."""
+    if 6 <= now.hour <= 23:
+        minute = ((now.minute // 15) + 1) * 15
+        if minute >= 60:
+            next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_run = now.replace(minute=minute, second=0, microsecond=0)
+    else:
+        next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    return max(1, (next_run - now).total_seconds())
+
+
+def run_scheduler():
+    while True:
+        try:
+            process()
+        except Exception:
+            log.exception("Schedule check failed; keeping service alive for the next attempt")
+
+        now = datetime.now(KYIV_TZ)
+        delay = seconds_until_next_run(now)
+        log.info("Next schedule check in %.0f seconds", delay)
+        time.sleep(delay)
 
 
 if __name__ == "__main__":
-    process()
+    port = int(os.environ.get("PORT", "10000"))
+    server = ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
+    threading.Thread(target=server.serve_forever, name="health-server", daemon=True).start()
+    log.info("Health endpoint listening on port %s", port)
+    run_scheduler()
