@@ -285,9 +285,9 @@ def has_schedule_data(day_map):
     return any(status in ("on", "off") for status in get_slots(day_map))
 
 
-def format_day(queue, date_value, day_map):
+def format_day(queue, date_value, day_map, day_label):
     intervals, has_unknown = outage_intervals(day_map)
-    lines = [f"Черга {queue} — {display_date(date_value)}"]
+    lines = [f"Черга {queue} — {display_date(date_value)} ({day_label})"]
 
     if not has_schedule_data(day_map):
         lines.append("⚪ Немає даних")
@@ -337,12 +337,12 @@ def build_message(payload):
         queue_schedule = schedule.get(raw_queue) or {}
         today_map = queue_schedule.get(today)
         if has_schedule_data(today_map):
-            lines.extend(format_day(label, today, today_map))
+            lines.extend(format_day(label, today, today_map, "сьогодні"))
             lines.append("")
         if tomorrow_exists:
             tomorrow_map = queue_schedule.get(tomorrow)
             if has_schedule_data(tomorrow_map):
-                lines.extend(format_day(label, tomorrow, tomorrow_map))
+                lines.extend(format_day(label, tomorrow, tomorrow_map, "на завтра"))
                 lines.append("")
 
     return "\n".join(lines).strip()
