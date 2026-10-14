@@ -120,6 +120,7 @@ def load_state():
         return {
             "hash": state["hash"],
             "message": state.get("message") if isinstance(state.get("message"), str) else None,
+            "sent_alerts": state.get("sent_alerts", []) if isinstance(state.get("sent_alerts", []), list) else [],
             "legacy": False,
             "backend": "github",
             "sha": payload["sha"],
@@ -154,8 +155,14 @@ def load_state():
     return None
 
 
-def save_state(value, message, old_state=None):
-    state = {"hash": value, "message": message}
+def save_state(value, message, old_state=None, sent_alerts=None):
+    state = {
+        "hash": value,
+        "message": message,
+        "sent_alerts": sent_alerts if sent_alerts is not None else (
+            old_state.get("sent_alerts", []) if old_state else []
+        ),
+    }
     headers = state_request_headers()
     if headers:
         payload = {
@@ -394,6 +401,56 @@ def build_change_message(old_message, new_message):
     return "🔔 Зміни графіка — Київська область\n\n" + "\n".join(changes).strip()
 
 
+def send_upcoming_event_alerts(payload, old_state):
+    """Send concise per-queue alerts for outages/restorations roughly 15–30 min ahead."""
+    now = datetime.now(KYIV_TZ)
+    sent_alerts = list(old_state.get("sent_alerts", [])) if old_state else []
+    sent_set = set(sent_alerts)
+    region = find_region(payload)
+    schedule = region.get("schedule") or {}
+    today = payload.get("date_today") or now.date().isoformat()
+    tomorrow = payload.get("date_tomorrow") or (datetime.fromisoformat(today).date() + timedelta(days=1)).isoformat()
+    changed = False
+
+    for raw_queue, queue_days in schedule.items():
+        queue = queue_label(raw_queue)
+        for date_value in (today, tomorrow):
+            day_map = (queue_days or {}).get(date_value)
+            slots = get_slots(day_map)
+            if not slots:
+                continue
+            for minute in range(0, 24 * 60, 30):
+                idx = minute // 30
+                status = slots[idx]
+                previous = slots[idx - 1] if idx > 0 else "unknown"
+                next_status = slots[idx + 1] if idx + 1 < len(slots) else "unknown"
+                events = []
+                if status == "off" and previous != "off":
+                    events.append(("off", minute))
+                if status == "on" and previous == "off":
+                    events.append(("on", minute))
+                for event, event_minute in events:
+                    event_dt = datetime.fromisoformat(date_value).replace(tzinfo=KYIV_TZ) + timedelta(minutes=event_minute)
+                    minutes_until = (event_dt - now).total_seconds() / 60
+                    if 15 < minutes_until <= 45:
+                        key = f"{queue}|{date_value}|{event}|{event_minute}"
+                        if key in sent_set:
+                            continue
+                        if event == "off":
+                            text = f"🔴 Група {queue} — вимкнення світла о {format_time(event_minute)}"
+                        else:
+                            text = f"🟢 Група {queue} — ввімкнення світла о {format_time(event_minute)}"
+                        send_message(text)
+                        sent_set.add(key)
+                        changed = True
+                        log.info("Upcoming %s alert sent for queue %s at %s", event, queue, format_time(event_minute))
+
+    # Keep state bounded to recent and upcoming days.
+    cutoff = (now.date() - timedelta(days=2)).isoformat()
+    sent_alerts = [key for key in sent_set if len(key.split("|")) == 4 and key.split("|")[1] >= cutoff]
+    return sent_alerts, changed
+
+
 def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
@@ -402,17 +459,18 @@ def process():
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
 
-    # First successful run only establishes the baseline; do not publish.
+    # Upcoming event alerts are independent of whether the overall schedule changed.
+    sent_alerts, _ = send_upcoming_event_alerts(payload, old_state)
     if old_state is None:
-        save_state(new_hash, message, old_state)
-        log.info("Initial schedule baseline saved; nothing published")
+        save_state(new_hash, message, old_state, sent_alerts)
+        log.info("Initial schedule baseline saved")
         return
 
     # No change: update stored text if needed, but do not send to Telegram.
     if old_state["hash"] == new_hash:
-        if old_state.get("message") != message or old_state.get("legacy"):
-            save_state(new_hash, message, old_state)
-        log.info("Schedule unchanged; no Telegram messages sent")
+        if old_state.get("message") != message or old_state.get("legacy") or sent_alerts != old_state.get("sent_alerts", []):
+            save_state(new_hash, message, old_state, sent_alerts)
+        log.info("Schedule unchanged; no schedule update messages sent")
         return
 
     # On a change, send the comparison first, then the full current schedule.
@@ -429,7 +487,7 @@ def process():
     send_message(add_update_time(message))
 
     # Save only after both messages were sent successfully.
-    save_state(new_hash, message, old_state)
+    save_state(new_hash, message, old_state, sent_alerts)
     log.info("Schedule changed; change notice and full schedule sent; state saved")
 
 
