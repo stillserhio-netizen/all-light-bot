@@ -520,7 +520,8 @@ def process():
 
     # On a change, send one full schedule with changed queue/day blocks marked and compared.
     old_message = old_state.get("message")
-    schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()\n    schedule_with_changes = build_schedule_with_changes(old_message, message, schedule_today)
+    schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat() = build_schedule_with_changes(old_message, message, schedule_today)
+    schedule_with_changes = build_schedule_with_changes(old_message, message, schedule_today)
     send_message(add_update_time(schedule_with_changes))
 
     # Save only after the full schedule was sent successfully.
