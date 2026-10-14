@@ -18,8 +18,8 @@ API_URL = "https://dtek-api.svitlo-proxy.workers.dev/"
 REGION_ID = "kiivska-oblast"
 STATE_FILE = "state.txt"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
+CHAT_ID = "-1003802691352"
 HTTP_TIMEOUT = 30
 
 QUEUE_LABELS = {
@@ -33,10 +33,6 @@ QUEUE_LABELS = {
 
 
 def send_message(text):
-    if not BOT_TOKEN or not CHAT_ID:
-        raise RuntimeError(
-            "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in GitHub Actions Secrets."
-        )
     response = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={"chat_id": CHAT_ID, "text": text},
