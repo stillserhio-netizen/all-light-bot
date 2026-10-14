@@ -330,22 +330,25 @@ def build_message(payload):
         has_schedule_data((schedule.get(queue) or {}).get(tomorrow))
         for queue in queues
     )
-    lines = ["💡 Графік відключень — Київська область", ""]
+    lines = ["💡 Графік відключень — Київська область", "", f"📅 ГРАФІК НА СЬОГОДНІ — {display_date(today)}", ""]
 
     for raw_queue in queues:
         label = queue_label(raw_queue)
-        queue_schedule = schedule.get(raw_queue) or {}
-        today_map = queue_schedule.get(today)
-        if has_schedule_data(today_map):
-            lines.extend(format_day(label, today, today_map, "сьогодні"))
+        day_map = (schedule.get(raw_queue) or {}).get(today)
+        if has_schedule_data(day_map):
+            lines.extend(format_day(label, today, day_map, "сьогодні"))
             lines.append("")
-        if tomorrow_exists:
-            tomorrow_map = queue_schedule.get(tomorrow)
-            if has_schedule_data(tomorrow_map):
-                lines.extend(format_day(label, tomorrow, tomorrow_map, "на завтра"))
+
+    if tomorrow_exists:
+        lines.extend(["", f"📅 ГРАФІК НА ЗАВТРА — {display_date(tomorrow)}", ""])
+        for raw_queue in queues:
+            label = queue_label(raw_queue)
+            day_map = (schedule.get(raw_queue) or {}).get(tomorrow)
+            if has_schedule_data(day_map):
+                lines.extend(format_day(label, tomorrow, day_map, "на завтра"))
                 lines.append("")
 
-    return "\n".join(lines).strip()
+    return "\\n".join(lines).strip()
 
 
 def extract_queue_blocks(message):
@@ -410,6 +413,11 @@ def build_schedule_with_changes(old_message, new_message):
             flush_block()
             current_key = match.groups()
             current_lines = []
+        elif line.startswith("📅 ГРАФІК НА "):
+            flush_block()
+            current_key = None
+            current_lines = []
+            output.append(line)
         elif current_key is None:
             output.append(line)
         elif not line.strip():
