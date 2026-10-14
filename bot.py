@@ -432,6 +432,16 @@ def send_upcoming_event_alerts(payload, old_state):
                 for event, event_minute in events:
                     event_dt = datetime.fromisoformat(date_value).replace(tzinfo=KYIV_TZ) + timedelta(minutes=event_minute)
                     minutes_until = (event_dt - now).total_seconds() / 60
+                    # Diagnostic mode: log upcoming transitions within 2 hours without sending test messages.
+                    if 0 < minutes_until <= 120:
+                        log.info(
+                            "ALERT_DIAGNOSTIC queue=%s event=%s scheduled_at=%s minutes_until=%.1f window_match=%s",
+                            queue,
+                            event,
+                            f"{date_value} {format_time(event_minute)}",
+                            minutes_until,
+                            15 < minutes_until <= 45,
+                        )
                     if 15 < minutes_until <= 45:
                         key = f"{queue}|{date_value}|{event}|{event_minute}"
                         if key in sent_set:
