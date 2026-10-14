@@ -459,16 +459,10 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def seconds_until_next_run(now):
-    """Align checks to quarter-hours from 06:00–23:59 Kyiv time and hourly overnight."""
+    """Run exactly 15 minutes after each daytime check; hourly overnight, Kyiv time."""
     if 6 <= now.hour <= 23:
-        minute = ((now.minute // 15) + 1) * 15
-        if minute >= 60:
-            next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        else:
-            next_run = now.replace(minute=minute, second=0, microsecond=0)
-    else:
-        next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    return max(1, (next_run - now).total_seconds())
+        return 15 * 60
+    return 60 * 60
 
 
 def run_scheduler():
