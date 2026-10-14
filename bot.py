@@ -1,7 +1,7 @@
 import hashlib
 import json
 import logging
-import os
+import re
 import subprocess
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -30,6 +30,8 @@ QUEUE_LABELS = {
     "5.1": "5.1", "5.2": "5.2",
     "6.1": "6.1", "6.2": "6.2",
 }
+
+QUEUE_BLOCK_RE = re.compile(r"^Черга ([\w.]+) — (\d{2}\.\d{2}\.\d{4})$")
 
 
 def split_message(message, max_length=3500):
@@ -81,14 +83,44 @@ def load_state():
     try:
         with open(STATE_FILE, encoding="utf-8") as file:
             value = file.read().strip()
-            return value or None
     except FileNotFoundError:
         return None
 
+    if not value:
+        return None
 
-def save_state(value):
+    # Backward compatibility: previous versions stored only the SHA-256 hash.
+    try:
+        state = json.loads(value)
+        if isinstance(state, dict) and isinstance(state.get("hash"), str):
+            return {
+                "hash": state["hash"],
+                "message": state.get("message") if isinstance(state.get("message"), str) else None,
+                "legacy": False,
+            }
+    except json.JSONDecodeError:
+        pass
+
+    if re.fullmatch(r"[0-9a-f]{64}", value):
+        return {"hash": value, "message": None, "legacy": True}
+
+    log.warning("State file has an unrecognized format; treating it as missing")
+    return None
+
+
+def add_update_time(message):
+    now = datetime.now(KYIV_TZ)
+    return f"{message}\n\n🕒 Час оновлення: {now.strftime('%d.%m.%Y о %H:%M')}"
+
+
+def display_date(date_value):
+    return datetime.fromisoformat(date_value).strftime("%d.%m.%Y")
+
+
+def save_state(value, message):
+    state = {"hash": value, "message": message}
     with open(STATE_FILE, "w", encoding="utf-8") as file:
-        file.write(value)
+        json.dump(state, file, ensure_ascii=False, separators=(",", ":"))
 
 
 def commit_state():
@@ -193,11 +225,15 @@ def outage_intervals(day_map):
     return intervals, "unknown" in slots
 
 
-def format_day(queue, day_label, date_value, day_map):
-    intervals, has_unknown = outage_intervals(day_map)
-    lines = [f"Черга {queue} — {day_label} ({date_value})"]
+def has_schedule_data(day_map):
+    return any(status in ("on", "off") for status in get_slots(day_map))
 
-    if not day_map or not get_slots(day_map):
+
+def format_day(queue, date_value, day_map):
+    intervals, has_unknown = outage_intervals(day_map)
+    lines = [f"Черга {queue} — {display_date(date_value)}"]
+
+    if not has_schedule_data(day_map):
         lines.append("⚪ Немає даних")
         return lines
 
@@ -219,13 +255,10 @@ def format_day(queue, day_label, date_value, day_map):
 def build_message(payload):
     region = find_region(payload)
     schedule = region.get("schedule") or {}
-    today = payload.get("date_today")
-    tomorrow = payload.get("date_tomorrow")
-
-    if not today:
-        today = datetime.now(KYIV_TZ).date().isoformat()
-    if not tomorrow:
-        tomorrow = (datetime.fromisoformat(today).date() + timedelta(days=1)).isoformat()
+    today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
+    tomorrow = payload.get("date_tomorrow") or (
+        datetime.fromisoformat(today).date() + timedelta(days=1)
+    ).isoformat()
 
     queues = sorted(
         schedule.keys(),
@@ -237,43 +270,116 @@ def build_message(payload):
     if not queues:
         raise ValueError(f"No queues found for region {REGION_ID}")
 
-    # Do not include the current polling time here: it would make every run
-    # look like a schedule change and spam the Telegram channel.
+    tomorrow_exists = any(
+        has_schedule_data((schedule.get(queue) or {}).get(tomorrow))
+        for queue in queues
+    )
     lines = ["💡 Графік відключень — Київська область", ""]
 
     for raw_queue in queues:
         label = queue_label(raw_queue)
         queue_schedule = schedule.get(raw_queue) or {}
-        lines.extend(format_day(label, "сьогодні", today, queue_schedule.get(today)))
-        lines.append("")
-        lines.extend(format_day(label, "завтра", tomorrow, queue_schedule.get(tomorrow)))
-        lines.append("")
+        today_map = queue_schedule.get(today)
+        if has_schedule_data(today_map):
+            lines.extend(format_day(label, today, today_map))
+            lines.append("")
+        if tomorrow_exists:
+            tomorrow_map = queue_schedule.get(tomorrow)
+            if has_schedule_data(tomorrow_map):
+                lines.extend(format_day(label, tomorrow, tomorrow_map))
+                lines.append("")
 
     lines.append("Джерело даних: https://svitlo.live/kiivska-oblast")
     return "\n".join(lines).strip()
+
+
+def extract_queue_blocks(message):
+    blocks = {}
+    current_key = None
+    current_lines = []
+
+    def store_current():
+        if current_key is not None:
+            blocks[current_key] = "\n".join(current_lines).strip() or "⚪ Немає даних"
+
+    for line in message.splitlines():
+        match = QUEUE_BLOCK_RE.match(line)
+        if match:
+            store_current()
+            current_key = match.groups()
+            current_lines = []
+        elif current_key is not None:
+            if not line.strip():
+                store_current()
+                current_key = None
+                current_lines = []
+            else:
+                current_lines.append(line)
+    store_current()
+    return blocks
+
+
+def build_change_message(old_message, new_message):
+    old_blocks = extract_queue_blocks(old_message)
+    new_blocks = extract_queue_blocks(new_message)
+    changes = []
+
+    for key in sorted(set(old_blocks) | set(new_blocks)):
+        old_body = old_blocks.get(key)
+        new_body = new_blocks.get(key)
+        if old_body == new_body:
+            continue
+        queue, date_value = key
+        old_text = old_body if old_body is not None else "⚪ Даних раніше не було"
+        new_text = new_body if new_body is not None else "⚪ Цього графіка більше немає в нових даних"
+        changes.extend([
+            f"Черга {queue} — {date_value}",
+            "Було:",
+            *[f"  {line}" for line in old_text.splitlines()],
+            "Стало:",
+            *[f"  {line}" for line in new_text.splitlines()],
+            "",
+        ])
+
+    if not changes:
+        return "🔔 Оновлення графіка — Київська область\nЗмінився лише набір дат у джерелі; інтервали відключень не змінилися."
+    return "🔔 Зміни графіка — Київська область\n\n" + "\n".join(changes).strip()
 
 
 def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
     new_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()
-    old_hash = load_state()
+    old_state = load_state()
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
-    if old_hash == new_hash:
-        log.info("No schedule changes")
-        return
 
-    # Preserve the original first-run behavior: save baseline without posting it.
-    if old_hash is None:
-        save_state(new_hash)
+    # First run or migration from hash-only state: save baseline without a false alert.
+    if old_state is None or old_state.get("legacy"):
+        save_state(new_hash, message)
         commit_state()
-        log.info("Initial schedule state saved; message not posted")
+        log.info("Initial schedule state saved; no Telegram message sent")
         return
 
-    # Store the new hash only after Telegram accepts the message.
-    send_message(message)
-    save_state(new_hash)
+    if old_state["hash"] == new_hash:
+        log.info("No schedule changes; state remains current")
+        return
+
+    old_message = old_state.get("message")
+    if old_message:
+        change_message = build_change_message(old_message, message)
+    else:
+        change_message = (
+            "🔔 Зміни графіка — Київська область\n"
+            "Попередній текст графіка недоступний для порівняння."
+        )
+
+    # Send the change summary first, then the full current schedule.
+    send_message(add_update_time(change_message))
+    send_message(add_update_time(message))
+
+    # Save state only after both Telegram messages are accepted.
+    save_state(new_hash, message)
     commit_state()
 
 
