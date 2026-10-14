@@ -1,7 +1,7 @@
 import hashlib
 import json
 import logging
-import os
+import re
 import subprocess
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -30,6 +30,8 @@ QUEUE_LABELS = {
     "5.1": "5.1", "5.2": "5.2",
     "6.1": "6.1", "6.2": "6.2",
 }
+
+QUEUE_BLOCK_RE = re.compile(r"^Черга ([\w.]+) — (сьогодні|завтра) \(([^)]+)\)$")
 
 
 def split_message(message, max_length=3500):
@@ -81,14 +83,35 @@ def load_state():
     try:
         with open(STATE_FILE, encoding="utf-8") as file:
             value = file.read().strip()
-            return value or None
     except FileNotFoundError:
         return None
 
+    if not value:
+        return None
 
-def save_state(value):
+    # Backward compatibility: previous versions stored only the SHA-256 hash.
+    try:
+        state = json.loads(value)
+        if isinstance(state, dict) and isinstance(state.get("hash"), str):
+            return {
+                "hash": state["hash"],
+                "message": state.get("message") if isinstance(state.get("message"), str) else None,
+                "legacy": False,
+            }
+    except json.JSONDecodeError:
+        pass
+
+    if re.fullmatch(r"[0-9a-f]{64}", value):
+        return {"hash": value, "message": None, "legacy": True}
+
+    log.warning("State file has an unrecognized format; treating it as missing")
+    return None
+
+
+def save_state(value, message):
+    state = {"hash": value, "message": message}
     with open(STATE_FILE, "w", encoding="utf-8") as file:
-        file.write(value)
+        json.dump(state, file, ensure_ascii=False, separators=(",", ":"))
 
 
 def commit_state():
@@ -237,8 +260,6 @@ def build_message(payload):
     if not queues:
         raise ValueError(f"No queues found for region {REGION_ID}")
 
-    # Do not include the current polling time here: it would make every run
-    # look like a schedule change and spam the Telegram channel.
     lines = ["💡 Графік відключень — Київська область", ""]
 
     for raw_queue in queues:
@@ -253,27 +274,115 @@ def build_message(payload):
     return "\n".join(lines).strip()
 
 
+def extract_queue_blocks(message):
+    """Return queue/day sections, ignoring dates in section keys for clean day-to-day diffs."""
+    blocks = {}
+    current_key = None
+    current_date = None
+    current_lines = []
+
+    def store_current():
+        if current_key is not None:
+            blocks[current_key] = {
+                "date": current_date,
+                "body": "\n".join(current_lines).strip() or "⚪ Немає даних",
+            }
+
+    for line in message.splitlines():
+        match = QUEUE_BLOCK_RE.match(line)
+        if match:
+            store_current()
+            queue, day_label, date_value = match.groups()
+            current_key = (queue, day_label)
+            current_date = date_value
+            current_lines = []
+        elif current_key is not None:
+            if not line.strip():
+                store_current()
+                current_key = None
+                current_date = None
+                current_lines = []
+            else:
+                current_lines.append(line)
+
+    store_current()
+    return blocks
+
+
+def build_change_message(old_message, new_message):
+    old_blocks = extract_queue_blocks(old_message)
+    new_blocks = extract_queue_blocks(new_message)
+    changes = []
+
+    for key in sorted(set(old_blocks) | set(new_blocks)):
+        old_block = old_blocks.get(key)
+        new_block = new_blocks.get(key)
+        queue, day_label = key
+        if old_block and new_block and old_block["body"] == new_block["body"]:
+            continue
+
+        old_date = old_block["date"] if old_block else "—"
+        new_date = new_block["date"] if new_block else "—"
+        old_body = old_block["body"] if old_block else "⚪ Даних раніше не було"
+        new_body = new_block["body"] if new_block else "⚪ Цей розділ відсутній у новому графіку"
+
+        changes.extend([
+            f"Черга {queue} — {day_label}",
+            f"Було ({old_date}):",
+            *[f"  {line}" for line in old_body.splitlines()],
+            f"Стало ({new_date}):",
+            *[f"  {line}" for line in new_body.splitlines()],
+            "",
+        ])
+
+    if changes:
+        return "🔔 Зміни графіка — Київська область\n\n" + "\n".join(changes).strip()
+
+    return (
+        "🔔 Оновлення графіка — Київська область\n"
+        "Дати графіка оновилися, але інтервали відключень у чергах не змінилися."
+    )
+
+
 def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
     new_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()
-    old_hash = load_state()
+    old_state = load_state()
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
-    if old_hash == new_hash:
+    if old_state and old_state["hash"] == new_hash:
         log.info("No schedule changes")
+        # Migrate the old hash-only state to the new format once.
+        if old_state.get("legacy"):
+            save_state(new_hash, message)
+            commit_state()
+            log.info("Legacy state migrated; no Telegram message needed")
         return
 
-    # Preserve the original first-run behavior: save baseline without posting it.
-    if old_hash is None:
-        save_state(new_hash)
+    if old_state is None:
+        # Keep the original first-run behavior: establish a baseline without posting.
+        save_state(new_hash, message)
         commit_state()
         log.info("Initial schedule state saved; message not posted")
         return
 
-    # Store the new hash only after Telegram accepts the message.
+    if old_state.get("message"):
+        change_message = build_change_message(old_state["message"], message)
+    else:
+        # The legacy file contains only a hash, so the previous schedule text cannot
+        # be reconstructed accurately for a true old -> new comparison.
+        change_message = (
+            "🔔 Оновлення графіка — Київська область\n"
+            "Порівняння «було → стало» для попереднього запуску недоступне: "
+            "старий стан зберігав лише контрольний хеш. Нижче — актуальний графік."
+        )
+
+    # Required order: first changes, then the complete current schedule.
+    send_message(change_message)
     send_message(message)
-    save_state(new_hash)
+    # Save only after Telegram accepts both messages.
+    save_state(new_hash, message)
     commit_state()
 
 
