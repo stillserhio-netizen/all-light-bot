@@ -285,8 +285,12 @@ def has_schedule_data(day_map):
     return any(status in ("on", "off") for status in get_slots(day_map))
 
 
-def format_day(queue, date_value, day_map, day_label):
+def format_day(queue, date_value, day_map, day_label, hide_past=False):
     intervals, has_unknown = outage_intervals(day_map)
+    if hide_past and date_value == datetime.now(KYIV_TZ).date().isoformat():
+        now = datetime.now(KYIV_TZ)
+        current_minutes = now.hour * 60 + now.minute
+        intervals = [(start, end) for start, end in intervals if end > current_minutes]
     lines = [f"Черга {queue} — {display_date(date_value)} ({day_label})"]
 
     if not has_schedule_data(day_map):
@@ -336,7 +340,7 @@ def build_message(payload):
         label = queue_label(raw_queue)
         day_map = (schedule.get(raw_queue) or {}).get(today)
         if has_schedule_data(day_map):
-            lines.extend(format_day(label, today, day_map, "сьогодні"))
+            lines.extend(format_day(label, today, day_map, "сьогодні", hide_past=True))
             lines.append("")
 
     if tomorrow_exists:
@@ -377,13 +381,15 @@ def extract_queue_blocks(message):
     return blocks
 
 
-def build_schedule_with_changes(old_message, new_message):
+def build_schedule_with_changes(old_message, new_message, today_date):
     """Mark changed queue/day blocks in the full schedule and show old -> new inline."""
     old_blocks = extract_queue_blocks(old_message or "")
     new_blocks = extract_queue_blocks(new_message)
+    # Compare and mark changes only for today's schedule. Tomorrow is published as a clean forecast.
+    today_display = display_date(today_date)
     changed_keys = {
         key for key, new_body in new_blocks.items()
-        if old_blocks.get(key) != new_body
+        if key[1] == today_display and old_blocks.get(key) != new_body
     }
 
     output = []
@@ -514,7 +520,7 @@ def process():
 
     # On a change, send one full schedule with changed queue/day blocks marked and compared.
     old_message = old_state.get("message")
-    schedule_with_changes = build_schedule_with_changes(old_message, message)
+    schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()\n    schedule_with_changes = build_schedule_with_changes(old_message, message, schedule_today)
     send_message(add_update_time(schedule_with_changes))
 
     # Save only after the full schedule was sent successfully.
