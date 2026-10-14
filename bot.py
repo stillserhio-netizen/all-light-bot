@@ -447,9 +447,9 @@ def send_upcoming_event_alerts(payload, old_state):
                         if key in sent_set:
                             continue
                         if event == "off":
-                            text = f"🔴 Група {queue} — вимкнення світла о {format_time(event_minute)}"
+                            text = f"🔦 Група {queue} — вимкнення світла о {format_time(event_minute)}"
                         else:
-                            text = f"🟢 Група {queue} — ввімкнення світла о {format_time(event_minute)}"
+                            text = f"💡 Група {queue} — ввімкнення світла о {format_time(event_minute)}"
                         send_message(text)
                         sent_set.add(key)
                         changed = True
