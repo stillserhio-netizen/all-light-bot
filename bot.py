@@ -32,17 +32,49 @@ QUEUE_LABELS = {
 }
 
 
+def split_message(message, max_length=3500):
+    """Split long Telegram messages on line boundaries, below Telegram's limit."""
+    chunks = []
+    current_lines = []
+    current_length = 0
+
+    for line in message.splitlines():
+        line_length = len(line) + (1 if current_lines else 0)
+        if current_lines and current_length + line_length > max_length:
+            chunks.append("\\n".join(current_lines))
+            current_lines = [line]
+            current_length = len(line)
+        else:
+            current_lines.append(line)
+            current_length += line_length
+
+    if current_lines:
+        chunks.append("\\n".join(current_lines))
+
+    if any(len(chunk) > max_length for chunk in chunks):
+        raise ValueError("A single schedule line exceeds the Telegram message limit")
+
+    if len(chunks) > 1:
+        return [
+            f"{chunk}\\n\\nЧастина {index}/{len(chunks)}"
+            for index, chunk in enumerate(chunks, start=1)
+        ]
+    return chunks
+
+
 def send_message(text):
-    response = requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text},
-        timeout=HTTP_TIMEOUT,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    if not payload.get("ok"):
-        raise RuntimeError(f"Telegram API rejected sendMessage: {payload}")
-    log.info("Telegram message sent")
+    chunks = split_message(text)
+    for index, chunk in enumerate(chunks, start=1):
+        response = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": chunk},
+            timeout=HTTP_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("ok"):
+            raise RuntimeError(f"Telegram API rejected sendMessage: {payload}")
+        log.info("Telegram message part %s/%s sent", index, len(chunks))
 
 
 def load_state():
