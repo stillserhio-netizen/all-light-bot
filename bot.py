@@ -374,31 +374,52 @@ def extract_queue_blocks(message):
     return blocks
 
 
-def build_change_message(old_message, new_message):
-    old_blocks = extract_queue_blocks(old_message)
+def build_schedule_with_changes(old_message, new_message):
+    """Mark changed queue/day blocks in the full schedule and show old -> new inline."""
+    old_blocks = extract_queue_blocks(old_message or "")
     new_blocks = extract_queue_blocks(new_message)
-    changes = []
+    changed_keys = {
+        key for key, new_body in new_blocks.items()
+        if old_blocks.get(key) != new_body
+    }
 
-    for key in sorted(set(old_blocks) | set(new_blocks)):
-        old_body = old_blocks.get(key)
-        new_body = new_blocks.get(key)
-        if old_body == new_body:
+    output = []
+    current_key = None
+    current_lines = []
+
+    def flush_block():
+        if current_key is None:
+            return
+        header = f"Черга {current_key[0]} — {current_key[1]}"
+        body = "\n".join(current_lines).strip()
+        if current_key in changed_keys:
+            previous = old_blocks.get(current_key)
+            previous_text = previous if previous is not None else "⚪ Даних раніше не було"
+            output.append(f"🚨 {header}")
+            output.append(f"Було: {previous_text.replace(chr(10), ' / ')}")
+            output.append(f"Стало: {body.replace(chr(10), ' / ')}")
+        else:
+            output.append(header)
+            if body:
+                output.extend(current_lines)
+        output.append("")
+
+    for line in new_message.splitlines():
+        match = QUEUE_BLOCK_RE.match(line)
+        if match:
+            flush_block()
+            current_key = match.groups()
+            current_lines = []
+        elif current_key is None:
+            output.append(line)
+        elif not line.strip():
+            # Blank lines separate queue/day blocks; flush when the next header arrives.
             continue
-        queue, date_value = key
-        old_text = old_body if old_body is not None else "⚪ Даних раніше не було"
-        new_text = new_body if new_body is not None else "⚪ Цього графіка більше немає в нових даних"
-        changes.extend([
-            f"Черга {queue} — {date_value}",
-            "Було:",
-            *[f"  {line}" for line in old_text.splitlines()],
-            "Стало:",
-            *[f"  {line}" for line in new_text.splitlines()],
-            "",
-        ])
+        else:
+            current_lines.append(line)
 
-    if not changes:
-        return "🔔 Оновлення графіка — Київська область\nЗмінився лише набір дат у джерелі; інтервали відключень не змінилися."
-    return "🔔 Зміни графіка — Київська область\n\n" + "\n".join(changes).strip()
+    flush_block()
+    return "\n".join(output).strip()
 
 
 def send_upcoming_event_alerts(payload, old_state):
@@ -483,22 +504,14 @@ def process():
         log.info("Schedule unchanged; no schedule update messages sent")
         return
 
-    # On a change, send the comparison first, then the full current schedule.
+    # On a change, send one full schedule with changed queue/day blocks marked and compared.
     old_message = old_state.get("message")
-    if old_message:
-        change_message = build_change_message(old_message, message)
-    else:
-        change_message = (
-            "🔔 Зміни графіка — Київська область\n"
-            "Попередній текст графіка недоступний для порівняння."
-        )
+    schedule_with_changes = build_schedule_with_changes(old_message, message)
+    send_message(add_update_time(schedule_with_changes))
 
-    send_message(add_update_time(change_message))
-    send_message(add_update_time(message))
-
-    # Save only after both messages were sent successfully.
+    # Save only after the full schedule was sent successfully.
     save_state(new_hash, message, old_state, sent_alerts)
-    log.info("Schedule changed; change notice and full schedule sent; state saved")
+    log.info("Schedule changed; one marked full schedule sent; state saved")
 
 
 class HealthHandler(BaseHTTPRequestHandler):
