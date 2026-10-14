@@ -389,7 +389,9 @@ def build_schedule_with_changes(old_message, new_message, today_date):
     today_display = display_date(today_date)
     changed_keys = {
         key for key, new_body in new_blocks.items()
-        if key[1] == today_display and old_blocks.get(key) != new_body
+        if key[1] == today_display
+        and old_blocks.get(key) != new_body
+        and "🟢 Без відключень" not in new_body
     }
 
     output = []
