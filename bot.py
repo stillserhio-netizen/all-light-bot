@@ -524,11 +524,23 @@ def process():
     old_message = old_state.get("message")
     schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
     schedule_with_changes = build_schedule_with_changes(old_message, message, schedule_today)
-    send_message(add_update_time(schedule_with_changes))
 
-    # Save only after the full schedule was sent successfully.
+    # Publish today's schedule and tomorrow's schedule as two separate channel posts.
+    tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
+    if tomorrow_heading in schedule_with_changes:
+        today_part, tomorrow_part = schedule_with_changes.split(tomorrow_heading, 1)
+        today_part = today_part.strip()
+        tomorrow_part = (tomorrow_heading + tomorrow_part).strip()
+        if today_part:
+            send_message(add_update_time(today_part))
+        if tomorrow_part:
+            send_message(add_update_time(tomorrow_part))
+    else:
+        send_message(add_update_time(schedule_with_changes))
+
+    # Save only after all schedule parts were sent successfully.
     save_state(new_hash, message, old_state, sent_alerts)
-    log.info("Schedule changed; one marked full schedule sent; state saved")
+    log.info("Schedule changed; today's and tomorrow's schedules published separately; state saved")
 
 
 class HealthHandler(BaseHTTPRequestHandler):
