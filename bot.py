@@ -337,25 +337,35 @@ def process():
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
 
-    # Publish the current complete schedule every run, even if it did not change.
-    # Keep the comparison alert first when an earlier state exists and changed.
-    if old_state is not None and not old_state.get("legacy") and old_state["hash"] != new_hash:
-        old_message = old_state.get("message")
-        if old_message:
-            change_message = build_change_message(old_message, message)
-        else:
-            change_message = (
-                "🔔 Зміни графіка — Київська область\n"
-                "Попередній текст графіка недоступний для порівняння."
-            )
-        send_message(add_update_time(change_message))
+    # First successful run only establishes the baseline; do not publish.
+    if old_state is None:
+        save_state(new_hash, message)
+        log.info("Initial schedule baseline saved; nothing published")
+        return
 
-    # Always send the full current schedule to the channel.
+    # No change: update stored text if needed, but do not send to Telegram.
+    if old_state["hash"] == new_hash:
+        if old_state.get("message") != message or old_state.get("legacy"):
+            save_state(new_hash, message)
+        log.info("Schedule unchanged; no Telegram messages sent")
+        return
+
+    # On a change, send the comparison first, then the full current schedule.
+    old_message = old_state.get("message")
+    if old_message:
+        change_message = build_change_message(old_message, message)
+    else:
+        change_message = (
+            "🔔 Зміни графіка — Київська область\n"
+            "Попередній текст графіка недоступний для порівняння."
+        )
+
+    send_message(add_update_time(change_message))
     send_message(add_update_time(message))
 
-    # First run simply establishes the baseline; state is saved after successful send.
+    # Save only after both messages were sent successfully.
     save_state(new_hash, message)
-    log.info("Full schedule sent; state saved locally")
+    log.info("Schedule changed; change notice and full schedule sent; state saved locally")
 
 
 class HealthHandler(BaseHTTPRequestHandler):
