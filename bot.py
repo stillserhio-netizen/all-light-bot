@@ -330,27 +330,60 @@ def build_message(payload):
     if not queues:
         raise ValueError(f"No queues found for region {REGION_ID}")
 
+    def day_lines(date_value, day_label, hide_past=False):
+        groups = {}
+        for raw_queue in queues:
+            day_map = (schedule.get(raw_queue) or {}).get(date_value)
+            if not has_schedule_data(day_map):
+                continue
+            intervals, has_unknown = outage_intervals(day_map)
+            if hide_past and date_value == datetime.now(KYIV_TZ).date().isoformat():
+                now = datetime.now(KYIV_TZ)
+                current_minutes = now.hour * 60 + now.minute
+                intervals = [(a, b) for a, b in intervals if b > current_minutes]
+            if intervals:
+                status = tuple(intervals)
+                label = "🔴 " + ", ".join(
+                    f"{format_time(a)}–{format_time(b)}" for a, b in intervals
+                )
+            elif not has_unknown:
+                status = ("no_outages",)
+                label = "🟢 Без відключень"
+            else:
+                status = ("unknown",)
+                label = "⚪ Немає підтверджених інтервалів відключення"
+            groups.setdefault(status, []).append(queue_label(raw_queue))
+
+        result = []
+        for status, labels in groups.items():
+            result.append(f"Черги {', '.join(labels)} — {display_date(date_value)} ({day_label})")
+            if status and status[0] == "no_outages":
+                result.append("🟢 Без відключень")
+            elif status and status[0] == "unknown":
+                result.append("⚪ Немає підтверджених інтервалів відключення")
+            else:
+                result.extend(
+                    f"🔴 {format_time(a)}–{format_time(b)}"
+                    for a, b in status
+                )
+            result.append("")
+        return result
+
     tomorrow_exists = any(
         has_schedule_data((schedule.get(queue) or {}).get(tomorrow))
         for queue in queues
     )
-    lines = ["💡 Графік відключень — Київська область", "", f"📅 ГРАФІК НА СЬОГОДНІ — {display_date(today)}", ""]
-
-    for raw_queue in queues:
-        label = queue_label(raw_queue)
-        day_map = (schedule.get(raw_queue) or {}).get(today)
-        if has_schedule_data(day_map):
-            lines.extend(format_day(label, today, day_map, "сьогодні", hide_past=True))
-            lines.append("")
+    lines = [
+        "💡 Графік відключень — Київська область",
+        "",
+        f"📅 ГРАФІК НА СЬОГОДНІ — {display_date(today)}",
+        "",
+    ]
+    lines.extend(day_lines(today, "сьогодні", hide_past=True))
 
     if tomorrow_exists:
         lines.extend(["", f"📅 ГРАФІК НА ЗАВТРА — {display_date(tomorrow)}", ""])
-        for raw_queue in queues:
-            label = queue_label(raw_queue)
-            day_map = (schedule.get(raw_queue) or {}).get(tomorrow)
-            if has_schedule_data(day_map):
-                lines.extend(format_day(label, tomorrow, day_map, "на завтра"))
-                lines.append("")
+        lines.extend(day_lines(tomorrow, "на завтра"))
 
     return "\n".join(lines).strip()
 
