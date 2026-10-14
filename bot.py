@@ -110,7 +110,7 @@ def load_state():
 
 def add_update_time(message):
     now = datetime.now(KYIV_TZ)
-    return f"{message}\\n\\n🕒 Час оновлення: {now.strftime('%d.%m.%Y о %H:%M')}"
+    return f"{message}\n\n🕒 Час оновлення: {now.strftime('%d.%m.%Y о %H:%M')}"
 
 
 def display_date(date_value):
@@ -290,7 +290,7 @@ def build_message(payload):
                 lines.append("")
 
     lines.append("Джерело даних: https://svitlo.live/kiivska-oblast")
-    return "\\n".join(lines).strip()
+    return "\n".join(lines).strip()
 
 
 def extract_queue_blocks(message):
@@ -300,7 +300,7 @@ def extract_queue_blocks(message):
 
     def store_current():
         if current_key is not None:
-            blocks[current_key] = "\\n".join(current_lines).strip() or "⚪ Немає даних"
+            blocks[current_key] = "\n".join(current_lines).strip() or "⚪ Немає даних"
 
     for line in message.splitlines():
         match = QUEUE_BLOCK_RE.match(line)
@@ -342,8 +342,8 @@ def build_change_message(old_message, new_message):
         ])
 
     if not changes:
-        return "🔔 Оновлення графіка — Київська область\\nЗмінився лише набір дат у джерелі; інтервали відключень не змінилися."
-    return "🔔 Зміни графіка — Київська область\\n\\n" + "\\n".join(changes).strip()
+        return "🔔 Оновлення графіка — Київська область\nЗмінився лише набір дат у джерелі; інтервали відключень не змінилися."
+    return "🔔 Зміни графіка — Київська область\n\n" + "\n".join(changes).strip()
 
 
 def process():
