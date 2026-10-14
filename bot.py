@@ -41,7 +41,7 @@ def split_message(message, max_length=3500):
     for line in message.splitlines():
         line_length = len(line) + (1 if current_lines else 0)
         if current_lines and current_length + line_length > max_length:
-            chunks.append("\\n".join(current_lines))
+            chunks.append("\n".join(current_lines))
             current_lines = [line]
             current_length = len(line)
         else:
@@ -49,14 +49,14 @@ def split_message(message, max_length=3500):
             current_length += line_length
 
     if current_lines:
-        chunks.append("\\n".join(current_lines))
+        chunks.append("\n".join(current_lines))
 
     if any(len(chunk) > max_length for chunk in chunks):
         raise ValueError("A single schedule line exceeds the Telegram message limit")
 
     if len(chunks) > 1:
         return [
-            f"{chunk}\\n\\nЧастина {index}/{len(chunks)}"
+            f"{chunk}\n\nЧастина {index}/{len(chunks)}"
             for index, chunk in enumerate(chunks, start=1)
         ]
     return chunks
