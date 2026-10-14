@@ -353,37 +353,32 @@ def process():
     old_state = load_state()
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
-    if old_state and old_state["hash"] == new_hash:
-        log.info("No schedule changes")
-        # Migrate the old hash-only state to the new format once.
-        if old_state.get("legacy"):
-            save_state(new_hash, message)
-            commit_state()
-            log.info("Legacy state migrated; no Telegram message needed")
-        return
 
-    if old_state is None:
-        # Keep the original first-run behavior: establish a baseline without posting.
+    # First run or migration from hash-only state: save baseline without a false alert.
+    if old_state is None or old_state.get("legacy"):
         save_state(new_hash, message)
         commit_state()
-        log.info("Initial schedule state saved; message not posted")
+        log.info("Initial schedule state saved; no Telegram message sent")
         return
 
-    if old_state.get("message"):
-        change_message = build_change_message(old_state["message"], message)
+    if old_state["hash"] == new_hash:
+        log.info("No schedule changes; state remains current")
+        return
+
+    old_message = old_state.get("message")
+    if old_message:
+        change_message = build_change_message(old_message, message)
     else:
-        # The legacy file contains only a hash, so the previous schedule text cannot
-        # be reconstructed accurately for a true old -> new comparison.
         change_message = (
-            "🔔 Оновлення графіка — Київська область\n"
-            "Порівняння «було → стало» для попереднього запуску недоступне: "
-            "старий стан зберігав лише контрольний хеш. Нижче — актуальний графік."
+            "🔔 Зміни графіка — Київська область\n"
+            "Попередній текст графіка недоступний для порівняння."
         )
 
-    # Required order: first changes, then the complete current schedule.
+    # Send the change summary first, then the full current schedule.
     send_message(add_update_time(change_message))
     send_message(add_update_time(message))
-    # Save only after Telegram accepts both messages.
+
+    # Save state only after both Telegram messages are accepted.
     save_state(new_hash, message)
     commit_state()
 
