@@ -299,7 +299,7 @@ def format_day(queue, date_value, day_map):
             for start, end in intervals
         )
     elif not has_unknown:
-        lines.append("🟢 Планових відключень не вказано")
+        lines.append("🟢 Без відключень")
     else:
         lines.append("⚪ Немає підтверджених інтервалів відключення")
 
