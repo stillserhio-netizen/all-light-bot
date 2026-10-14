@@ -38,7 +38,7 @@ QUEUE_LABELS = {
     "6.1": "6.1", "6.2": "6.2",
 }
 
-QUEUE_BLOCK_RE = re.compile(r"^Черга ([\w.]+) — (\d{2}\.\d{2}\.\d{4})$")
+QUEUE_BLOCK_RE = re.compile(r"^Черга ([\w.]+) — (\d{2}\.\d{2}\.\d{4})(?: \((?:сьогодні|на завтра)\))?$")
 
 
 def split_message(message, max_length=3500):
@@ -348,7 +348,7 @@ def build_message(payload):
                 lines.extend(format_day(label, tomorrow, day_map, "на завтра"))
                 lines.append("")
 
-    return "\\n".join(lines).strip()
+    return "\n".join(lines).strip()
 
 
 def extract_queue_blocks(message):
