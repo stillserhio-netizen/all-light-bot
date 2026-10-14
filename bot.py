@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import subprocess
-import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -71,10 +70,7 @@ def commit_state():
         check=True,
     )
     subprocess.run(["git", "add", STATE_FILE], check=True)
-    result = subprocess.run(
-        ["git", "diff", "--cached", "--quiet"],
-        check=False,
-    )
+    result = subprocess.run(["git", "diff", "--cached", "--quiet"], check=False)
     if result.returncode == 0:
         log.info("State file unchanged; no commit needed")
         return
@@ -119,7 +115,6 @@ def queue_label(raw_queue):
     value = str(raw_queue).upper().replace("GPV", "").replace(" ", "")
     if value in QUEUE_LABELS:
         return QUEUE_LABELS[value]
-    # Do not discard queues that the provider may add later.
     return value or str(raw_queue)
 
 
@@ -167,8 +162,7 @@ def outage_intervals(day_map):
             intervals.append((start, index * 30))
             start = None
 
-    has_unknown = "unknown" in slots
-    return intervals, has_unknown
+    return intervals, "unknown" in slots
 
 
 def format_day(queue, day_label, date_value, day_map):
@@ -180,7 +174,10 @@ def format_day(queue, day_label, date_value, day_map):
         return lines
 
     if intervals:
-        lines.extend(f"🔴 {format_time(start)}–{format_time(end)}" for start, end in intervals)
+        lines.extend(
+            f"🔴 {format_time(start)}–{format_time(end)}"
+            for start, end in intervals
+        )
     elif not has_unknown:
         lines.append("🟢 Планових відключень не вказано")
     else:
@@ -212,11 +209,9 @@ def build_message(payload):
     if not queues:
         raise ValueError(f"No queues found for region {REGION_ID}")
 
-    lines = [
-        "💡 Графік відключень — Київська область",
-        f"Оновлено перевіркою: {datetime.now(KYIV_TZ).strftime('%H:%M %d.%m.%Y')}",
-        "",
-    ]
+    # Do not include the current polling time here: it would make every run
+    # look like a schedule change and spam the Telegram channel.
+    lines = ["💡 Графік відключень — Київська область", ""]
 
     for raw_queue in queues:
         label = queue_label(raw_queue)
@@ -241,14 +236,14 @@ def process():
         log.info("No schedule changes")
         return
 
-    # Keep the original bot's first-run behavior: save baseline without posting it.
+    # Preserve the original first-run behavior: save baseline without posting it.
     if old_hash is None:
         save_state(new_hash)
         commit_state()
         log.info("Initial schedule state saved; message not posted")
         return
 
-    # Only store the new hash after Telegram successfully accepts the message.
+    # Store the new hash only after Telegram accepts the message.
     send_message(message)
     save_state(new_hash)
     commit_state()
