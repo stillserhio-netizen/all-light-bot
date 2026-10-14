@@ -25,7 +25,7 @@ GITHUB_STATE_API = "https://api.github.com/repos/stillserhio-netizen/all-light-b
 GITHUB_STATE_BRANCH = "main"
 GITHUB_STATE_TOKEN = os.environ.get("GITHUB_STATE_TOKEN", "").strip()
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
-BOT_TOKEN = "8531283640:AAGcDueeQqu-nXZ8aYrBT7lh8lABOWi9Crs"
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 CHAT_ID = "-1003802691352"
 HTTP_TIMEOUT = 30
 
@@ -189,12 +189,6 @@ def add_update_time(message):
 
 def display_date(date_value):
     return datetime.fromisoformat(date_value).strftime("%d.%m.%Y")
-
-
-def save_state(value, message):
-    state = {"hash": value, "message": message}
-    with open(STATE_FILE, "w", encoding="utf-8") as file:
-        json.dump(state, file, ensure_ascii=False, separators=(",", ":"))
 
 
 def fetch_schedule_data():
