@@ -501,7 +501,7 @@ def send_upcoming_event_alerts(payload, old_state):
 def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
-    new_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()
+    new_hash = hashlib.sha256(("publish-once|" + message).encode("utf-8")).hexdigest()
     old_state = load_state()
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
