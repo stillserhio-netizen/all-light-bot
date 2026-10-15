@@ -38,7 +38,7 @@ QUEUE_LABELS = {
     "6.1": "6.1", "6.2": "6.2",
 }
 
-QUEUE_BLOCK_RE = re.compile(r"^Черга ([\w.]+) — (\d{2}\.\d{2}\.\d{4})(?: \((?:сьогодні|на завтра)\))?$")
+QUEUE_BLOCK_RE = re.compile(r"^Черги? (.+?) — (\d{2}\.\d{2}\.\d{4})(?: \((?:сьогодні|на завтра)\))?$")
 
 
 def split_message(message, max_length=3500):
