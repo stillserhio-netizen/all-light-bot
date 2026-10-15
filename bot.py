@@ -422,9 +422,23 @@ def extract_queue_blocks(message):
 
 
 def build_schedule_with_changes(old_message, new_message, today_date):
-    """Mark changed queue/day blocks, including when an outage is removed."""
+    """Mark real schedule changes, ignoring outages that have already ended."""
     old_blocks = extract_queue_blocks(old_message or "")
     today_display = display_date(today_date)
+    now = datetime.now(KYIV_TZ)
+    current_minutes = now.hour * 60 + now.minute
+
+    def remove_expired_intervals(body):
+        """Past intervals naturally disappear from today's display; don't call that a schedule change."""
+        kept = []
+        for line in body.splitlines():
+            match = re.search(r"🔴\\s*(\\d{1,2}:\\d{2})–(\\d{1,2}:\\d{2})", line)
+            if match:
+                end_hour, end_minute = map(int, match.group(2).split(":"))
+                if end_hour * 60 + end_minute <= current_minutes:
+                    continue
+            kept.append(line)
+        return "\\n".join(kept).strip() or "🟢 Без відключень"
     output = []
     current_labels = []
     current_date = None
@@ -440,7 +454,8 @@ def build_schedule_with_changes(old_message, new_message, today_date):
         if current_date == today_display:
             changed_labels = [
                 label for label in current_labels
-                if old_blocks.get((label, current_date)) != (body or "⚪ Немає даних")
+                if remove_expired_intervals(old_blocks.get((label, current_date), "⚪ Даних раніше не було"))
+                != (body or "⚪ Немає даних")
             ]
 
         if changed_labels:
