@@ -432,13 +432,13 @@ def build_schedule_with_changes(old_message, new_message, today_date):
         """Past intervals naturally disappear from today's display; don't call that a schedule change."""
         kept = []
         for line in body.splitlines():
-            match = re.search(r"🔴\\s*(\\d{1,2}:\\d{2})–(\\d{1,2}:\\d{2})", line)
+            match = re.search(r"🔴\s*(\d{1,2}:\d{2})–(\d{1,2}:\d{2})", line)
             if match:
                 end_hour, end_minute = map(int, match.group(2).split(":"))
                 if end_hour * 60 + end_minute <= current_minutes:
                     continue
             kept.append(line)
-        return "\\n".join(kept).strip() or "🟢 Без відключень"
+        return "\n".join(kept).strip() or "🟢 Без відключень"
     output = []
     current_labels = []
     current_date = None
@@ -465,7 +465,8 @@ def build_schedule_with_changes(old_message, new_message, today_date):
                 if previous is None:
                     previous = "⚪ Даних раніше не було"
                 previous_parts.append(f"{label}: {previous.replace(chr(10), ' / ')}")
-            output.append(f"🚨 {header}")
+            changed_header = f"Черги {', '.join(changed_labels)} — {current_date}"
+            output.append(f"🚨 {changed_header}")
             output.append(f"Було: {'; '.join(previous_parts)}")
             output.append(f"Стало: {body.replace(chr(10), ' / ')}")
         else:
