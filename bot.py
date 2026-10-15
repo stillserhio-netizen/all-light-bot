@@ -389,24 +389,31 @@ def build_message(payload):
 
 
 def extract_queue_blocks(message):
+    """Expand grouped queue headers into individual queue/day entries for comparisons."""
     blocks = {}
-    current_key = None
+    current_labels = []
+    current_date = None
     current_lines = []
 
     def store_current():
-        if current_key is not None:
-            blocks[current_key] = "\n".join(current_lines).strip() or "⚪ Немає даних"
+        if current_date is None:
+            return
+        body = "\\n".join(current_lines).strip() or "⚪ Немає даних"
+        for label in current_labels:
+            blocks[(label.strip(), current_date)] = body
 
     for line in message.splitlines():
         match = QUEUE_BLOCK_RE.match(line)
         if match:
             store_current()
-            current_key = match.groups()
+            current_labels = [label.strip() for label in match.group(1).split(",")]
+            current_date = match.group(2)
             current_lines = []
-        elif current_key is not None:
+        elif current_date is not None:
             if not line.strip():
                 store_current()
-                current_key = None
+                current_labels = []
+                current_date = None
                 current_lines = []
             else:
                 current_lines.append(line)
@@ -415,32 +422,36 @@ def extract_queue_blocks(message):
 
 
 def build_schedule_with_changes(old_message, new_message, today_date):
-    """Mark changed queue/day blocks in the full schedule and show old -> new inline."""
+    """Mark changed queue/day blocks, including when an outage is removed."""
     old_blocks = extract_queue_blocks(old_message or "")
-    new_blocks = extract_queue_blocks(new_message)
-    # Compare and mark changes only for today's schedule. Tomorrow is published as a clean forecast.
     today_display = display_date(today_date)
-    changed_keys = {
-        key for key, new_body in new_blocks.items()
-        if key[1] == today_display
-        and old_blocks.get(key) != new_body
-        and "🟢 Без відключень" not in new_body
-    }
-
     output = []
-    current_key = None
+    current_labels = []
+    current_date = None
+    current_day_label = ""
     current_lines = []
 
     def flush_block():
-        if current_key is None:
+        if current_date is None:
             return
-        header = f"Черга {current_key[0]} — {current_key[1]}"
-        body = "\n".join(current_lines).strip()
-        if current_key in changed_keys:
-            previous = old_blocks.get(current_key)
-            previous_text = previous if previous is not None else "⚪ Даних раніше не було"
+        header = f"Черги {', '.join(current_labels)} — {current_date}"
+        body = "\\n".join(current_lines).strip()
+        changed_labels = []
+        if current_date == today_display:
+            changed_labels = [
+                label for label in current_labels
+                if old_blocks.get((label, current_date)) != (body or "⚪ Немає даних")
+            ]
+
+        if changed_labels:
+            previous_parts = []
+            for label in changed_labels:
+                previous = old_blocks.get((label, current_date))
+                if previous is None:
+                    previous = "⚪ Даних раніше не було"
+                previous_parts.append(f"{label}: {previous.replace(chr(10), ' / ')}")
             output.append(f"🚨 {header}")
-            output.append(f"Було: {previous_text.replace(chr(10), ' / ')}")
+            output.append(f"Було: {'; '.join(previous_parts)}")
             output.append(f"Стало: {body.replace(chr(10), ' / ')}")
         else:
             output.append(header)
@@ -452,23 +463,25 @@ def build_schedule_with_changes(old_message, new_message, today_date):
         match = QUEUE_BLOCK_RE.match(line)
         if match:
             flush_block()
-            current_key = match.groups()
+            current_labels = [label.strip() for label in match.group(1).split(",")]
+            current_date = match.group(2)
+            current_day_label = line
             current_lines = []
         elif line.startswith("📅 ГРАФІК НА "):
             flush_block()
-            current_key = None
+            current_labels = []
+            current_date = None
             current_lines = []
             output.append(line)
-        elif current_key is None:
+        elif current_date is None:
             output.append(line)
         elif not line.strip():
-            # Blank lines separate queue/day blocks; flush when the next header arrives.
             continue
         else:
             current_lines.append(line)
 
     flush_block()
-    return "\n".join(output).strip()
+    return "\\n".join(output).strip()
 
 
 def send_upcoming_event_alerts(payload, old_state):
