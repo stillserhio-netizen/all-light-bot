@@ -398,7 +398,7 @@ def extract_queue_blocks(message):
     def store_current():
         if current_date is None:
             return
-        body = "\\n".join(current_lines).strip() or "⚪ Немає даних"
+        body = "\n".join(current_lines).strip() or "⚪ Немає даних"
         for label in current_labels:
             blocks[(label.strip(), current_date)] = body
 
@@ -435,7 +435,7 @@ def build_schedule_with_changes(old_message, new_message, today_date):
         if current_date is None:
             return
         header = f"Черги {', '.join(current_labels)} — {current_date}"
-        body = "\\n".join(current_lines).strip()
+        body = "\n".join(current_lines).strip()
         changed_labels = []
         if current_date == today_display:
             changed_labels = [
@@ -481,7 +481,7 @@ def build_schedule_with_changes(old_message, new_message, today_date):
             current_lines.append(line)
 
     flush_block()
-    return "\\n".join(output).strip()
+    return "\n".join(output).strip()
 
 
 def send_upcoming_event_alerts(payload, old_state):
