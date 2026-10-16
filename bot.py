@@ -424,7 +424,7 @@ def build_schedule_with_changes(old_message, new_message, today_date):
         """Ignore elapsed outage intervals while preserving unknown-data status."""
         interval_lines = []
         has_unknown = "⚠️ Частина інтервалів невідома" in body
-        no_data = "⚪ Немає даних" in body
+        no_data = "⚪ Немає даних" in body or "⚪ Даних раніше не було" in body
         for line in body.splitlines():
             match = re.search(r"🔴\s*(\d{1,2}:\d{2})–(\d{1,2}:\d{2})", line)
             if not match:
