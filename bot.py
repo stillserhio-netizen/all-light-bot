@@ -27,6 +27,7 @@ GITHUB_STATE_TOKEN = os.environ.get("GITHUB_STATE_TOKEN", "").strip()
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 CHAT_ID = "-1003802691352"
+QUEUE_12_CHAT_ID = "-1004430228294"
 HTTP_TIMEOUT = 30
 
 QUEUE_LABELS = {
@@ -71,12 +72,12 @@ def split_message(message, max_length=3500):
     return chunks
 
 
-def send_message(text):
+def send_message(text, chat_id=CHAT_ID):
     chunks = split_message(text)
     for index, chunk in enumerate(chunks, start=1):
         response = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": chunk},
+            data={"chat_id": chat_id, "text": chunk},
             timeout=HTTP_TIMEOUT,
         )
         response.raise_for_status()
@@ -121,6 +122,7 @@ def load_state():
             "hash": state["hash"],
             "message": state.get("message") if isinstance(state.get("message"), str) else None,
             "sent_alerts": state.get("sent_alerts", []) if isinstance(state.get("sent_alerts", []), list) else [],
+            "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
             "legacy": False,
             "backend": "github",
             "sha": payload["sha"],
@@ -155,12 +157,15 @@ def load_state():
     return None
 
 
-def save_state(value, message, old_state=None, sent_alerts=None):
+def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=None):
     state = {
         "hash": value,
         "message": message,
         "sent_alerts": sent_alerts if sent_alerts is not None else (
             old_state.get("sent_alerts", []) if old_state else []
+        ),
+        "queue_12_hash": queue_12_hash if queue_12_hash is not None else (
+            old_state.get("queue_12_hash") if old_state else None
         ),
     }
     headers = state_request_headers()
@@ -312,7 +317,7 @@ def format_day(queue, date_value, day_map, day_label, hide_past=False):
     return lines
 
 
-def build_message(payload):
+def build_message(payload, only_queue=None):
     region = find_region(payload)
     schedule = region.get("schedule") or {}
     today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
@@ -327,8 +332,10 @@ def build_message(payload):
             queue_label(value),
         ),
     )
+    if only_queue is not None:
+        queues = [queue for queue in queues if queue_label(queue) == only_queue]
     if not queues:
-        raise ValueError(f"No queues found for region {REGION_ID}")
+        raise ValueError(f"No queues found for region {REGION_ID} and filter {only_queue!r}")
 
     def day_lines(date_value, day_label, hide_past=False):
         result = []
@@ -568,6 +575,8 @@ def send_upcoming_event_alerts(payload, old_state):
                         else:
                             text = f"💡 Група {queue} — ввімкнення світла о {format_time(event_minute)}"
                         send_message(text)
+                        if queue == "1.2":
+                            send_message(text, chat_id=QUEUE_12_CHAT_ID)
                         sent_set.add(key)
                         changed = True
                         log.info("Upcoming %s alert sent for queue %s at %s", event, queue, format_time(event_minute))
@@ -581,7 +590,9 @@ def send_upcoming_event_alerts(payload, old_state):
 def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
+    message_12 = build_message(payload, only_queue="1.2")
     new_hash = hashlib.sha256(("publish-tomorrow-separately|" + message).encode("utf-8")).hexdigest()
+    new_hash_12 = hashlib.sha256(message_12.encode("utf-8")).hexdigest()
     old_state = load_state()
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
@@ -589,23 +600,56 @@ def process():
     # Upcoming event alerts are independent of whether the overall schedule changed.
     sent_alerts, _ = send_upcoming_event_alerts(payload, old_state)
     if old_state is None:
-        save_state(new_hash, message, old_state, sent_alerts)
-        log.info("Initial schedule baseline saved")
+        # Keep the existing no-initial-post behavior in the main channel, but seed the new channel.
+        tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
+        if tomorrow_heading in message_12:
+            today_part_12, tomorrow_part_12 = message_12.split(tomorrow_heading, 1)
+            if today_part_12.strip():
+                send_message(add_update_time(today_part_12.strip()), chat_id=QUEUE_12_CHAT_ID)
+            tomorrow_part_12 = (tomorrow_heading + tomorrow_part_12).strip()
+            if tomorrow_part_12:
+                send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
+        else:
+            send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
+        save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
+        log.info("Initial schedule baseline saved; queue 1.2 schedule published")
         return
 
-    # No change: update stored text if needed, but do not send to Telegram.
+    # Publish the queue 1.2 baseline once, then only when that queue's schedule changes.
+    old_hash_12 = old_state.get("queue_12_hash")
+    if old_hash_12 != new_hash_12:
+        if old_hash_12 is None:
+            schedule_with_changes_12 = message_12
+        else:
+            schedule_with_changes_12 = build_schedule_with_changes(
+                old_state.get("message"), message_12,
+                payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
+            )
+        tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
+        if tomorrow_heading in schedule_with_changes_12:
+            today_part_12, tomorrow_part_12 = schedule_with_changes_12.split(tomorrow_heading, 1)
+            today_part_12 = today_part_12.strip()
+            tomorrow_part_12 = (tomorrow_heading + tomorrow_part_12).strip()
+            if today_part_12:
+                send_message(add_update_time(today_part_12), chat_id=QUEUE_12_CHAT_ID)
+            if tomorrow_part_12:
+                send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
+        elif schedule_with_changes_12.strip():
+            send_message(add_update_time(schedule_with_changes_12), chat_id=QUEUE_12_CHAT_ID)
+        log.info("Queue 1.2 schedule published to its dedicated channel")
+
+    # Main-channel schedule handling remains independent of the queue 1.2 channel.
     if old_state["hash"] == new_hash:
-        if old_state.get("message") != message or old_state.get("legacy") or sent_alerts != old_state.get("sent_alerts", []):
-            save_state(new_hash, message, old_state, sent_alerts)
-        log.info("Schedule unchanged; no schedule update messages sent")
+        if (old_state.get("message") != message or old_state.get("legacy")
+                or sent_alerts != old_state.get("sent_alerts", [])
+                or old_hash_12 != new_hash_12):
+            save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
+        log.info("Schedule unchanged in main channel; no main schedule update sent")
         return
 
-    # On a change, send one full schedule with changed queue/day blocks marked and compared.
     old_message = old_state.get("message")
     schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
     schedule_with_changes = build_schedule_with_changes(old_message, message, schedule_today)
-
-    # Publish today's schedule and tomorrow's schedule as two separate channel posts.
     tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
     if tomorrow_heading in schedule_with_changes:
         today_part, tomorrow_part = schedule_with_changes.split(tomorrow_heading, 1)
@@ -618,9 +662,9 @@ def process():
     else:
         send_message(add_update_time(schedule_with_changes))
 
-    # Save only after all schedule parts were sent successfully.
-    save_state(new_hash, message, old_state, sent_alerts)
-    log.info("Schedule changed; today's and tomorrow's schedules published separately; state saved")
+    # Save only after all required schedule posts were sent successfully.
+    save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
+    log.info("Main schedule update published; state saved")
 
 
 class HealthHandler(BaseHTTPRequestHandler):
