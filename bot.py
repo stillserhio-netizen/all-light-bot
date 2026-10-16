@@ -420,17 +420,29 @@ def build_schedule_with_changes(old_message, new_message, today_date):
     now = datetime.now(KYIV_TZ)
     current_minutes = now.hour * 60 + now.minute
 
-    def remove_expired_intervals(body):
-        """Past intervals naturally disappear from today's display; don't call that a schedule change."""
-        kept = []
+    def normalize_today_body(body):
+        """Ignore elapsed outage intervals while preserving unknown-data status."""
+        interval_lines = []
+        has_unknown = "⚠️ Частина інтервалів невідома" in body
+        no_data = "⚪ Немає даних" in body
         for line in body.splitlines():
             match = re.search(r"🔴\s*(\d{1,2}:\d{2})–(\d{1,2}:\d{2})", line)
-            if match:
-                end_hour, end_minute = map(int, match.group(2).split(":"))
-                if end_hour * 60 + end_minute <= current_minutes:
-                    continue
-            kept.append(line)
-        return "\n".join(kept).strip() or "🟢 Без відключень"
+            if not match:
+                continue
+            end_hour, end_minute = map(int, match.group(2).split(":"))
+            if end_hour * 60 + end_minute > current_minutes:
+                interval_lines.append(line)
+
+        if interval_lines:
+            normalized = interval_lines
+            if has_unknown:
+                normalized.append("⚠️ Частина інтервалів невідома")
+            return "\n".join(normalized)
+        if has_unknown:
+            return "⚪ Немає підтверджених інтервалів відключення\n⚠️ Частина інтервалів невідома"
+        if no_data:
+            return "⚪ Немає даних"
+        return "🟢 Без відключень"
     output = []
     current_labels = []
     current_date = None
@@ -446,9 +458,9 @@ def build_schedule_with_changes(old_message, new_message, today_date):
         if current_date == today_display:
             changed_labels = [
                 label for label in current_labels
-                if remove_expired_intervals(
+                if normalize_today_body(
                     old_blocks.get((label, current_date), "⚪ Даних раніше не було")
-                ) != (body or "⚪ Немає даних")
+                ) != normalize_today_body(body or "⚪ Немає даних")
             ]
 
         unchanged_labels = [label for label in current_labels if label not in changed_labels]
@@ -460,7 +472,7 @@ def build_schedule_with_changes(old_message, new_message, today_date):
                 if previous is None:
                     previous = "⚪ Даних раніше не було"
                 else:
-                    previous = remove_expired_intervals(previous)
+                    previous = normalize_today_body(previous)
                 previous_parts.append(f"{label}: {previous.replace(chr(10), ' / ')}")
             changed_header = f"Черга {', '.join(changed_labels)} — {current_date}"
             output.append(f"🚨 {changed_header}")
