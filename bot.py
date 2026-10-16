@@ -75,8 +75,8 @@ def split_message(message, max_length=3500):
 def format_telegram_message(text):
     """Hide dates on queue headers in the published Telegram format only."""
     return re.sub(
-        r"^(Черги? .+?) — \\d{2}\\.\\d{2}\\.\\d{4}(?: \\((?:сьогодні|на завтра)\\))?$",
-        r"\\1",
+        r"^(Черги? .+?) — \d{2}\.\d{2}\.\d{4}(?: \((?:сьогодні|на завтра)\))?$",
+        r"\1",
         text,
         flags=re.MULTILINE,
     )
