@@ -454,9 +454,12 @@ def build_schedule_with_changes(old_message, new_message, today_date):
         if current_date == today_display:
             changed_labels = [
                 label for label in current_labels
-                if remove_expired_intervals(old_blocks.get((label, current_date), "⚪ Даних раніше не було"))
-                != (body or "⚪ Немає даних")
+                if remove_expired_intervals(
+                    old_blocks.get((label, current_date), "⚪ Даних раніше не було")
+                ) != (body or "⚪ Немає даних")
             ]
+
+        unchanged_labels = [label for label in current_labels if label not in changed_labels]
 
         if changed_labels:
             previous_parts = []
@@ -464,16 +467,27 @@ def build_schedule_with_changes(old_message, new_message, today_date):
                 previous = old_blocks.get((label, current_date))
                 if previous is None:
                     previous = "⚪ Даних раніше не було"
+                else:
+                    previous = remove_expired_intervals(previous)
                 previous_parts.append(f"{label}: {previous.replace(chr(10), ' / ')}")
             changed_header = f"Черги {', '.join(changed_labels)} — {current_date}"
             output.append(f"🚨 {changed_header}")
             output.append(f"Було: {'; '.join(previous_parts)}")
             output.append(f"Стало: {body.replace(chr(10), ' / ')}")
-        else:
+            output.append("")
+
+        # Do not lose queues grouped with a changed queue if their own schedule did not change.
+        if unchanged_labels:
+            unchanged_header = f"Черги {', '.join(unchanged_labels)} — {current_date}"
+            output.append(unchanged_header)
+            if body:
+                output.extend(current_lines)
+            output.append("")
+        elif not changed_labels:
             output.append(header)
             if body:
                 output.extend(current_lines)
-        output.append("")
+            output.append("")
 
     for line in new_message.splitlines():
         match = QUEUE_BLOCK_RE.match(line)
