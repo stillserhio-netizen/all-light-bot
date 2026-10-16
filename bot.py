@@ -351,7 +351,7 @@ def build_message(payload, only_queue=None):
                 intervals = [(a, b) for a, b in intervals if b > current_minutes]
 
             result.append(
-                f"Черга {queue_label(raw_queue)} — {display_date(date_value)} ({day_label})"
+                f"Черга {queue_label(raw_queue)} — {display_date(date_value)}"
             )
             if intervals:
                 result.extend(
@@ -373,8 +373,6 @@ def build_message(payload, only_queue=None):
         for queue in queues
     )
     lines = [
-        "💡 Графік відключень — Київська область",
-        "",
         f"📅 ГРАФІК НА СЬОГОДНІ — {display_date(today)}",
         "",
     ]
