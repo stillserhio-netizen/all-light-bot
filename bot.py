@@ -331,41 +331,33 @@ def build_message(payload):
         raise ValueError(f"No queues found for region {REGION_ID}")
 
     def day_lines(date_value, day_label, hide_past=False):
-        groups = {}
+        result = []
         for raw_queue in queues:
             day_map = (schedule.get(raw_queue) or {}).get(date_value)
             if not has_schedule_data(day_map):
                 continue
+
             intervals, has_unknown = outage_intervals(day_map)
             if hide_past and date_value == datetime.now(KYIV_TZ).date().isoformat():
                 now = datetime.now(KYIV_TZ)
                 current_minutes = now.hour * 60 + now.minute
                 intervals = [(a, b) for a, b in intervals if b > current_minutes]
-            if intervals:
-                status = tuple(intervals)
-                label = "🔴 " + ", ".join(
-                    f"{format_time(a)}–{format_time(b)}" for a, b in intervals
-                )
-            elif not has_unknown:
-                status = ("no_outages",)
-                label = "🟢 Без відключень"
-            else:
-                status = ("unknown",)
-                label = "⚪ Немає підтверджених інтервалів відключення"
-            groups.setdefault(status, []).append(queue_label(raw_queue))
 
-        result = []
-        for status, labels in groups.items():
-            result.append(f"Черги {', '.join(labels)} — {display_date(date_value)} ({day_label})")
-            if status and status[0] == "no_outages":
-                result.append("🟢 Без відключень")
-            elif status and status[0] == "unknown":
-                result.append("⚪ Немає підтверджених інтервалів відключення")
-            else:
+            result.append(
+                f"Черга {queue_label(raw_queue)} — {display_date(date_value)} ({day_label})"
+            )
+            if intervals:
                 result.extend(
                     f"🔴 {format_time(a)}–{format_time(b)}"
-                    for a, b in status
+                    for a, b in intervals
                 )
+            elif not has_unknown:
+                result.append("🟢 Без відключень")
+            else:
+                result.append("⚪ Немає підтверджених інтервалів відключення")
+
+            if has_unknown:
+                result.append("⚠️ Частина інтервалів невідома")
             result.append("")
         return result
 
@@ -448,7 +440,7 @@ def build_schedule_with_changes(old_message, new_message, today_date):
     def flush_block():
         if current_date is None:
             return
-        header = f"Черги {', '.join(current_labels)} — {current_date}"
+        header = f"Черга {', '.join(current_labels)} — {current_date}"
         body = "\n".join(current_lines).strip()
         changed_labels = []
         if current_date == today_display:
@@ -470,7 +462,7 @@ def build_schedule_with_changes(old_message, new_message, today_date):
                 else:
                     previous = remove_expired_intervals(previous)
                 previous_parts.append(f"{label}: {previous.replace(chr(10), ' / ')}")
-            changed_header = f"Черги {', '.join(changed_labels)} — {current_date}"
+            changed_header = f"Черга {', '.join(changed_labels)} — {current_date}"
             output.append(f"🚨 {changed_header}")
             output.append(f"Було: {'; '.join(previous_parts)}")
             output.append(f"Стало: {body.replace(chr(10), ' / ')}")
@@ -478,7 +470,7 @@ def build_schedule_with_changes(old_message, new_message, today_date):
 
         # Do not lose queues grouped with a changed queue if their own schedule did not change.
         if unchanged_labels:
-            unchanged_header = f"Черги {', '.join(unchanged_labels)} — {current_date}"
+            unchanged_header = f"Черга {', '.join(unchanged_labels)} — {current_date}"
             output.append(unchanged_header)
             if body:
                 output.extend(current_lines)
