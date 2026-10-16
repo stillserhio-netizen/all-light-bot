@@ -75,7 +75,7 @@ def split_message(message, max_length=3500):
 def format_telegram_message(text):
     """Hide dates on queue headers in the published Telegram format only."""
     return re.sub(
-        r"^(Черги? .+?) — \d{2}\.\d{2}\.\d{4}(?: \((?:сьогодні|на завтра)\))?$",
+        r"^((?:🚨 )?Черги? .+?) — \d{2}\.\d{2}\.\d{4}(?: \((?:сьогодні|на завтра)\))?$",
         r"\1",
         text,
         flags=re.MULTILINE,
@@ -601,8 +601,8 @@ def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
     message_12 = build_message(payload, only_queue="1.2")
-    new_hash = hashlib.sha256(("display-format-v3|publish-tomorrow-separately|" + message).encode("utf-8")).hexdigest()
-    new_hash_12 = hashlib.sha256(("display-format-v3|" + message_12).encode("utf-8")).hexdigest()
+    new_hash = hashlib.sha256(("display-format-v4|publish-tomorrow-separately|" + message).encode("utf-8")).hexdigest()
+    new_hash_12 = hashlib.sha256(("display-format-v4|" + message_12).encode("utf-8")).hexdigest()
     old_state = load_state()
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
