@@ -581,9 +581,9 @@ def send_upcoming_event_alerts(payload, old_state):
                         if key in sent_set:
                             continue
                         if event == "off":
-                            text = f"🔦 Група {queue} — вимкнення світла о {format_time(event_minute)}"
+                            text = f"🔦 Черга {queue} — вимкнення світла о {format_time(event_minute)}"
                         else:
-                            text = f"💡 Група {queue} — ввімкнення світла о {format_time(event_minute)}"
+                            text = f"💡 Черга {queue} — ввімкнення світла о {format_time(event_minute)}"
                         # Deliver queue 1.2 to its dedicated channel first, so a failure in the main channel cannot suppress it.
                         if queue == "1.2":
                             send_message(text, chat_id=QUEUE_12_CHAT_ID)
