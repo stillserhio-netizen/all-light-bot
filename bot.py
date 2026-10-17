@@ -639,7 +639,7 @@ def process():
         new_blocks_12 = extract_queue_blocks(message_12)
         old_queue_blocks = {date: body for (queue, date), body in old_blocks_12.items() if queue == "1.2"}
         new_queue_blocks = {date: body for (queue, date), body in new_blocks_12.items() if queue == "1.2"}
-        actual_change_12 = old_queue_blocks != new_queue_blocks
+        actual_change_12 = True  # Trust the queue-specific canonical hash.
 
         if actual_change_12:
             tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
