@@ -329,7 +329,7 @@ def format_day(queue, date_value, day_map, day_label, hide_past=False):
     return lines
 
 
-def build_message(payload, only_queue=None):
+def build_message(payload, only_queue=None, hide_past_today=True):
     region = find_region(payload)
     schedule = region.get("schedule") or {}
     today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
@@ -388,7 +388,7 @@ def build_message(payload, only_queue=None):
         f"📅 ГРАФІК НА СЬОГОДНІ — {display_date(today)}",
         "",
     ]
-    lines.extend(day_lines(today, "сьогодні", hide_past=True))
+    lines.extend(day_lines(today, "сьогодні", hide_past=hide_past_today))
 
     if tomorrow_exists:
         lines.extend(["", f"📅 ГРАФІК НА ЗАВТРА — {display_date(tomorrow)}", ""])
@@ -536,7 +536,7 @@ def build_schedule_with_changes(old_message, new_message, today_date):
 
 
 def send_upcoming_event_alerts(payload, old_state):
-    """Send concise per-queue alerts for outages/restorations roughly 15–30 min ahead."""
+    """Send alerts for transitions within the next 45 minutes, with persistent deduplication."""
     now = datetime.now(KYIV_TZ)
     sent_alerts = list(old_state.get("sent_alerts", [])) if old_state else []
     sent_set = set(sent_alerts)
@@ -574,9 +574,9 @@ def send_upcoming_event_alerts(payload, old_state):
                             event,
                             f"{date_value} {format_time(event_minute)}",
                             minutes_until,
-                            15 < minutes_until <= 45,
+                            0 < minutes_until <= 45,
                         )
-                    if 15 < minutes_until <= 45:
+                    if 0 < minutes_until <= 45:
                         key = f"{queue}|{date_value}|{event}|{event_minute}"
                         if key in sent_set:
                             continue
@@ -584,9 +584,11 @@ def send_upcoming_event_alerts(payload, old_state):
                             text = f"🔦 Група {queue} — вимкнення світла о {format_time(event_minute)}"
                         else:
                             text = f"💡 Група {queue} — ввімкнення світла о {format_time(event_minute)}"
-                        send_message(text)
+                        # Deliver queue 1.2 to its dedicated channel first, so a failure in the main channel cannot suppress it.
                         if queue == "1.2":
                             send_message(text, chat_id=QUEUE_12_CHAT_ID)
+                            log.info("Upcoming %s alert sent to queue 1.2 channel at %s", event, format_time(event_minute))
+                        send_message(text)
                         sent_set.add(key)
                         changed = True
                         log.info("Upcoming %s alert sent for queue %s at %s", event, queue, format_time(event_minute))
@@ -601,8 +603,11 @@ def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
     message_12 = build_message(payload, only_queue="1.2")
-    new_hash = hashlib.sha256(("display-format-v6|publish-tomorrow-separately|" + message).encode("utf-8")).hexdigest()
-    new_hash_12 = hashlib.sha256(("display-format-v6|" + message_12).encode("utf-8")).hexdigest()
+    # Hash the full schedule, including elapsed intervals, so the rendered message changing as time passes does not trigger duplicate posts.
+    canonical_message = build_message(payload, hide_past_today=False)
+    canonical_message_12 = build_message(payload, only_queue="1.2", hide_past_today=False)
+    new_hash = hashlib.sha256(("schedule-v7|publish-tomorrow-separately|" + canonical_message).encode("utf-8")).hexdigest()
+    new_hash_12 = hashlib.sha256(("schedule-v7|" + canonical_message_12).encode("utf-8")).hexdigest()
     old_state = load_state()
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
