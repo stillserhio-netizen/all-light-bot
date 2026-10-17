@@ -630,48 +630,33 @@ def process():
         log.info("Initial schedule baseline saved; queue 1.2 schedule published")
         return
 
-    # Publish the queue 1.2 baseline once, then only when that queue's schedule changes.
+    # Publish queue 1.2 whenever its actual addressable schedule blocks change.
+    # Compare the queue-specific message against queue 1.2 blocks extracted from the
+    # previous full-channel message; do not infer changes from the global hash.
     old_hash_12 = old_state.get("queue_12_hash")
     if old_hash_12 != new_hash_12:
-        if old_hash_12 is None:
-            schedule_with_changes_12 = message_12
-        else:
-            schedule_with_changes_12 = build_schedule_with_changes(
-                old_state.get("message"), message_12,
-                payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
-            )
-        # A changed version/hash alone must not republish the same schedule.
-        # Today's real changes are marked with 🚨 by build_schedule_with_changes;
-        # compare tomorrow's queue 1.2 block separately.
-        actual_change_12 = "🚨" in schedule_with_changes_12
         old_blocks_12 = extract_queue_blocks(old_state.get("message") or "")
         new_blocks_12 = extract_queue_blocks(message_12)
-        tomorrow_date = payload.get("date_tomorrow") or (
-            datetime.fromisoformat(payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()).date()
-            + timedelta(days=1)
-        ).isoformat()
-        tomorrow_display = display_date(tomorrow_date)
-        old_tomorrow_12 = old_blocks_12.get(("1.2", tomorrow_display))
-        new_tomorrow_12 = new_blocks_12.get(("1.2", tomorrow_display))
-        if old_tomorrow_12 != new_tomorrow_12:
-            actual_change_12 = True
+        old_queue_blocks = {date: body for (queue, date), body in old_blocks_12.items() if queue == "1.2"}
+        new_queue_blocks = {date: body for (queue, date), body in new_blocks_12.items() if queue == "1.2"}
+        actual_change_12 = old_queue_blocks != new_queue_blocks
 
         if actual_change_12:
             tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
-            if tomorrow_heading in schedule_with_changes_12:
-                today_part_12, tomorrow_part_12 = schedule_with_changes_12.split(tomorrow_heading, 1)
+            if tomorrow_heading in message_12:
+                today_part_12, tomorrow_part_12 = message_12.split(tomorrow_heading, 1)
                 today_part_12 = today_part_12.strip()
                 tomorrow_part_12 = (tomorrow_heading + tomorrow_part_12).strip()
-                if today_part_12 and "🚨" in today_part_12:
+                if today_part_12:
                     send_message(add_update_time(today_part_12), chat_id=QUEUE_12_CHAT_ID)
-                if tomorrow_part_12 and old_tomorrow_12 != new_tomorrow_12:
+                if tomorrow_part_12:
                     send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
-            elif schedule_with_changes_12.strip() and "🚨" in schedule_with_changes_12:
-                send_message(add_update_time(schedule_with_changes_12), chat_id=QUEUE_12_CHAT_ID)
-            log.info("Queue 1.2 schedule change published to its dedicated channel")
+            else:
+                send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
+            log.info("Queue 1.2 schedule changed; updated dedicated channel (old blocks=%s, new blocks=%s)",
+                     old_queue_blocks, new_queue_blocks)
         else:
             log.info("Queue 1.2 schedule unchanged; duplicate post suppressed")
-
     # Main-channel schedule handling remains independent of the queue 1.2 channel.
     if old_state["hash"] == new_hash:
         if (old_state.get("message") != message or old_state.get("legacy")
