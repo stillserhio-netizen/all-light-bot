@@ -440,6 +440,48 @@ def extract_queue_blocks(message):
     return blocks
 
 
+def normalize_elapsed_schedule_body(body, current_minutes):
+    """Normalize today's schedule by excluding intervals that have already ended."""
+    interval_lines = []
+    has_unknown = "⚠️ Частина інтервалів невідома" in body
+    no_data = "⚪ Немає даних" in body or "⚪ Даних раніше не було" in body
+    for line in body.splitlines():
+        match = re.search(r"🔴\\s*(\\d{1,2}:\\d{2})–(\\d{1,2}:\\d{2})", line)
+        if not match:
+            continue
+        end_hour, end_minute = map(int, match.group(2).split(":"))
+        if end_hour * 60 + end_minute > current_minutes:
+            interval_lines.append(line)
+    if interval_lines:
+        if has_unknown:
+            interval_lines.append("⚠️ Частина інтервалів невідома")
+        return "\\n".join(interval_lines)
+    if has_unknown:
+        return "⚪ Немає підтверджених інтервалів відключення\\n⚠️ Частина інтервалів невідома"
+    if no_data:
+        return "⚪ Немає даних"
+    return "🟢 Без відключень"
+
+
+def queue_schedule_has_real_changes(old_message, new_message, today_date):
+    """Ignore elapsed intervals for today, but compare future dates in full."""
+    old_blocks = extract_queue_blocks(old_message or "")
+    new_blocks = extract_queue_blocks(new_message or "")
+    today_display = display_date(today_date)
+    now = datetime.now(KYIV_TZ)
+    current_minutes = now.hour * 60 + now.minute
+    for key in set(old_blocks) | set(new_blocks):
+        queue, date_label = key
+        old_body = old_blocks.get(key, "⚪ Даних раніше не було")
+        new_body = new_blocks.get(key, "⚪ Немає даних")
+        if date_label == today_display:
+            old_body = normalize_elapsed_schedule_body(old_body, current_minutes)
+            new_body = normalize_elapsed_schedule_body(new_body, current_minutes)
+        if old_body != new_body:
+            return True
+    return False
+
+
 def build_schedule_with_changes(old_message, new_message, today_date):
     """Mark real schedule changes, ignoring outages that have already ended."""
     old_blocks = extract_queue_blocks(old_message or "")
@@ -821,7 +863,11 @@ def process():
         new_blocks_12 = extract_queue_blocks(message_12)
         old_queue_blocks = {date: body for (queue, date), body in old_blocks_12.items() if queue == "1.2"}
         new_queue_blocks = {date: body for (queue, date), body in new_blocks_12.items() if queue == "1.2"}
-        actual_change_12 = True  # Trust the queue-specific canonical hash.
+        # A hash can differ because an outage interval ended and disappeared from
+        # today's rendered message. Publish only if remaining intervals or future dates changed.
+        actual_change_12 = queue_schedule_has_real_changes(
+            old_state.get("message") or "", message_12, schedule_today
+        )
 
         if actual_change_12:
             # Keep queue 1.2's existing schedule flow, but mark today's real interval changes
