@@ -524,12 +524,17 @@ def build_schedule_with_changes(old_message, new_message, today_date):
         header = f"Черга {', '.join(current_labels)} — {current_date}"
         body = "\n".join(current_lines).strip()
         changed_labels = []
-        if current_date == today_display:
+        if current_date is not None:
             changed_labels = [
                 label for label in current_labels
-                if normalize_today_body(
-                    old_blocks.get((label, current_date), "⚪ Даних раніше не було")
-                ) != normalize_today_body(body or "⚪ Немає даних")
+                if (
+                    normalize_today_body(
+                        old_blocks.get((label, current_date), "⚪ Даних раніше не було")
+                    ) != normalize_today_body(body or "⚪ Немає даних")
+                    if current_date == today_display
+                    else old_blocks.get((label, current_date), "⚪ Даних раніше не було")
+                    != (body or "⚪ Немає даних")
+                )
             ]
 
         unchanged_labels = [label for label in current_labels if label not in changed_labels]
@@ -857,6 +862,7 @@ def process():
     # Publish queue 1.2 whenever its actual addressable schedule blocks change.
     # Compare the queue-specific message against queue 1.2 blocks extracted from the
     # previous full-channel message; do not infer changes from the global hash.
+    schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
     old_hash_12 = old_state.get("queue_12_hash")
     if old_hash_12 != new_hash_12:
         old_blocks_12 = extract_queue_blocks(old_state.get("message") or "")
