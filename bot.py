@@ -446,7 +446,7 @@ def normalize_elapsed_schedule_body(body, current_minutes):
     has_unknown = "⚠️ Частина інтервалів невідома" in body
     no_data = "⚪ Немає даних" in body or "⚪ Даних раніше не було" in body
     for line in body.splitlines():
-        match = re.search(r"🔴\\s*(\\d{1,2}:\\d{2})–(\\d{1,2}:\\d{2})", line)
+        match = re.search(r"🔴\s*(\d{1,2}:\d{2})–(\d{1,2}:\d{2})", line)
         if not match:
             continue
         end_hour, end_minute = map(int, match.group(2).split(":"))
@@ -455,9 +455,9 @@ def normalize_elapsed_schedule_body(body, current_minutes):
     if interval_lines:
         if has_unknown:
             interval_lines.append("⚠️ Частина інтервалів невідома")
-        return "\\n".join(interval_lines)
+        return "\n".join(interval_lines)
     if has_unknown:
-        return "⚪ Немає підтверджених інтервалів відключення\\n⚠️ Частина інтервалів невідома"
+        return "⚪ Немає підтверджених інтервалів відключення\n⚠️ Частина інтервалів невідома"
     if no_data:
         return "⚪ Немає даних"
     return "🟢 Без відключень"
