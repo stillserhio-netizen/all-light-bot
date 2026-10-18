@@ -612,7 +612,7 @@ def send_upcoming_event_alerts(payload, old_state):
 
 class DtekNoticeParser(HTMLParser):
     """Extract visible text from likely DTEK alert/banner containers."""
-    TARGET_CLASSES = {"m-attention__text", "modal-content", "popup-content", "modal-body"}
+    TARGET_CLASSES = {"m-attention__text", "modal-content", "popup-content", "modal-body", "tgme_widget_message_text"}
     VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 
     def __init__(self):
@@ -657,34 +657,44 @@ class DtekNoticeParser(HTMLParser):
 
 
 def fetch_dtek_emergency_notice():
-    """Return the current emergency notice text from DTEK's alert containers, if accessible."""
-    url = "https://www.dtek-krem.com.ua/ua/shutdowns"
-    try:
-        response = requests.get(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; all-light-bot/1.0)",
-                "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.5",
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        parser = DtekNoticeParser()
-        parser.feed(response.text)
-        relevant = [
-            text for text in parser.candidates
-            if any(word in text.lower() for word in ("екстрен", "аварійн", "обмеження"))
-            and not any(word in text.lower() for word in ("скасовано", "відновлено", "повертаємось до графіків"))
-        ]
-        if not relevant:
-            log.warning("DTEK emergency banner not found in HTML response")
-            return None
-        # Prefer the longest relevant banner because it is more likely to include all affected districts.
-        notice = max(relevant, key=len)
-        return notice[:1500]
-    except Exception as exc:
-        log.warning("Could not read DTEK emergency notice: %s", exc)
-        return None
+    """Read current regional emergency details from DTEK's site, then official DTEK Telegram as fallback."""
+    urls = (
+        ("website", "https://www.dtek-krem.com.ua/ua/shutdowns"),
+        ("telegram", "https://t.me/s/dtek_ua"),
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; all-light-bot/1.0)",
+        "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.5",
+    }
+    for source, url in urls:
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            parser = DtekNoticeParser()
+            parser.feed(response.text)
+            relevant = [
+                text for text in parser.candidates
+                if any(word in text.lower() for word in ("екстрен", "аварійн", "обмеження"))
+                and not any(word in text.lower() for word in ("скасовано", "відновлено", "повертаємось до графіків"))
+            ]
+            if source == "telegram":
+                relevant = [
+                    text for text in relevant
+                    if any(place in text.lower() for place in (
+                        "київщина", "київська область", "київській області", "київської області"
+                    ))
+                ]
+            if not relevant:
+                log.warning("No current DTEK emergency notice found in %s response", source)
+                continue
+            # Telegram's public feed is newest-first; use its first relevant post.
+            # On the website, prefer the fullest matching banner.
+            notice = relevant[0] if source == "telegram" else max(relevant, key=len)
+            log.info("Emergency notice retrieved from DTEK %s", source)
+            return notice[:1500]
+        except Exception as exc:
+            log.warning("Could not read DTEK emergency notice from %s: %s", source, exc)
+    return None
 
 
 def process_emergency_status(payload, old_state):
