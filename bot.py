@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import logging
+from html.parser import HTMLParser
 import os
 import re
 import threading
@@ -135,6 +136,8 @@ def load_state():
             "message": state.get("message") if isinstance(state.get("message"), str) else None,
             "sent_alerts": state.get("sent_alerts", []) if isinstance(state.get("sent_alerts", []), list) else [],
             "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
+            "emergency_state": state.get("emergency_state") if isinstance(state.get("emergency_state"), bool) else None,
+            "emergency_text": state.get("emergency_text") if isinstance(state.get("emergency_text"), str) else None,
             "legacy": False,
             "backend": "github",
             "sha": payload["sha"],
@@ -156,6 +159,8 @@ def load_state():
             return {
                 "hash": state["hash"],
                 "message": state.get("message") if isinstance(state.get("message"), str) else None,
+                "emergency_state": state.get("emergency_state") if isinstance(state.get("emergency_state"), bool) else None,
+                "emergency_text": state.get("emergency_text") if isinstance(state.get("emergency_text"), str) else None,
                 "legacy": False,
                 "backend": "local",
             }
@@ -169,7 +174,7 @@ def load_state():
     return None
 
 
-def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=None):
+def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=None, emergency_state=None, emergency_text=None):
     state = {
         "hash": value,
         "message": message,
@@ -178,6 +183,12 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
         ),
         "queue_12_hash": queue_12_hash if queue_12_hash is not None else (
             old_state.get("queue_12_hash") if old_state else None
+        ),
+        "emergency_state": emergency_state if emergency_state is not None else (
+            old_state.get("emergency_state") if old_state else None
+        ),
+        "emergency_text": emergency_text if emergency_text is not None else (
+            old_state.get("emergency_text") if old_state else None
         ),
     }
     headers = state_request_headers()
@@ -599,6 +610,118 @@ def send_upcoming_event_alerts(payload, old_state):
     return sent_alerts, changed
 
 
+
+class DtekNoticeParser(HTMLParser):
+    """Collect text from DTEK's emergency banner and modal containers."""
+    TARGET_CLASSES = {"m-attention__text", "modal-content", "popup-content", "modal-body"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.active = []
+        self.candidates = []
+
+    def handle_starttag(self, tag, attrs):
+        self.stack.append(tag)
+        attributes = dict(attrs)
+        classes = set((attributes.get("class") or "").split())
+        if classes.intersection(self.TARGET_CLASSES) or attributes.get("role") == "dialog":
+            candidate = {"tag": tag, "depth": len(self.stack), "parts": []}
+            self.candidates.append(candidate)
+            self.active.append(candidate)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_data(self, data):
+        for candidate in self.active:
+            candidate["parts"].append(data)
+
+    def handle_endtag(self, tag):
+        depth = len(self.stack)
+        self.active = [
+            candidate for candidate in self.active
+            if not (candidate["tag"] == tag and candidate["depth"] == depth)
+        ]
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index] == tag:
+                del self.stack[index:]
+                break
+
+
+def fetch_dtek_emergency_notice():
+    """Read the emergency notice from DTEK's Kyiv-region page."""
+    url = "https://www.dtek-krem.com.ua/ua/shutdowns"
+    response = requests.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
+            "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.5",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    parser = DtekNoticeParser()
+    parser.feed(response.text)
+
+    candidates = []
+    for candidate in parser.candidates:
+        text = re.sub(r"\s+", " ", " ".join(candidate["parts"])).strip()
+        lower = text.lower()
+        if ("екстрен" in lower or "аварійн" in lower) and text:
+            if any(word in lower for word in ("скасовано", "відновлено", "повертаємось до графіків")):
+                continue
+            if text not in candidates:
+                candidates.append(text)
+
+    if not candidates:
+        return None
+    return max(candidates, key=len)
+
+
+def handle_emergency_alerts(payload, old_state):
+    """Publish DTEK district-specific emergency notices only when state/text changes."""
+    region = find_region(payload)
+    current_state = region.get("emergency")
+    if not isinstance(current_state, bool):
+        log.warning("Emergency field missing or invalid for %s; skipping emergency alert check", REGION_ID)
+        return None, None
+
+    previous_state = old_state.get("emergency_state") if old_state else None
+    previous_text = old_state.get("emergency_text") if old_state else None
+
+    if current_state:
+        try:
+            notice = fetch_dtek_emergency_notice()
+        except Exception:
+            log.exception("Could not fetch DTEK emergency notice; will retry on next poll")
+            return previous_state, previous_text
+
+        if not notice:
+            log.warning("API says emergency=true but no current district notice was found; will retry")
+            return previous_state, previous_text
+
+        if previous_state is not True:
+            send_message("🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — Київська область\n\n" + notice)
+            log.info("Emergency start notice published")
+        elif notice != previous_text:
+            send_message("⚠️ ОНОВЛЕННЯ ЕКСТРЕНИХ ВІДКЛЮЧЕНЬ — Київська область\n\n" + notice)
+            log.info("Emergency district notice update published")
+        else:
+            log.info("Emergency is active; district notice unchanged")
+        return True, notice
+
+    if previous_state is True:
+        send_message(
+            "✅ Екстрені відключення в Київській області скасовано за даними API. "
+            "Перевіряйте актуальний графік ДТЕК."
+        )
+        log.info("Emergency cancellation notice published")
+    return False, previous_text
+
+
+
 def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
@@ -609,6 +732,7 @@ def process():
     new_hash = hashlib.sha256(("schedule-v7|publish-tomorrow-separately|" + canonical_message).encode("utf-8")).hexdigest()
     new_hash_12 = hashlib.sha256(("schedule-v7|" + canonical_message_12).encode("utf-8")).hexdigest()
     old_state = load_state()
+    emergency_state, emergency_text = handle_emergency_alerts(payload, old_state)
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
 
@@ -626,7 +750,7 @@ def process():
                 send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
         else:
             send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
-        save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
+        save_state(new_hash, message, old_state, sent_alerts, new_hash_12, emergency_state, emergency_text)
         log.info("Initial schedule baseline saved; queue 1.2 schedule published")
         return
 
@@ -662,7 +786,7 @@ def process():
         if (old_state.get("message") != message or old_state.get("legacy")
                 or sent_alerts != old_state.get("sent_alerts", [])
                 or old_hash_12 != new_hash_12):
-            save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
+            save_state(new_hash, message, old_state, sent_alerts, new_hash_12, emergency_state, emergency_text)
         log.info("Schedule unchanged in main channel; no main schedule update sent")
         return
 
@@ -682,7 +806,7 @@ def process():
         send_message(add_update_time(schedule_with_changes))
 
     # Save only after all required schedule posts were sent successfully.
-    save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
+    save_state(new_hash, message, old_state, sent_alerts, new_hash_12, emergency_state, emergency_text)
     log.info("Main schedule update published; state saved")
 
 
