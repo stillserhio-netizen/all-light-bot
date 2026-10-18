@@ -137,6 +137,7 @@ def load_state():
             "message": state.get("message") if isinstance(state.get("message"), str) else None,
             "sent_alerts": state.get("sent_alerts", []) if isinstance(state.get("sent_alerts", []), list) else [],
             "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
+            "queue_12_message": state.get("queue_12_message") if isinstance(state.get("queue_12_message"), str) else None,
             "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
             "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
             "legacy": False,
@@ -162,6 +163,7 @@ def load_state():
                 "message": state.get("message") if isinstance(state.get("message"), str) else None,
                 "sent_alerts": state.get("sent_alerts", []) if isinstance(state.get("sent_alerts", []), list) else [],
                 "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
+                "queue_12_message": state.get("queue_12_message") if isinstance(state.get("queue_12_message"), str) else None,
                 "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
                 "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
                 "legacy": False,
@@ -177,7 +179,7 @@ def load_state():
     return None
 
 
-def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=None):
+def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=None, queue_12_message=None):
     state = {
         "hash": value,
         "message": message,
@@ -186,6 +188,9 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
         ),
         "queue_12_hash": queue_12_hash if queue_12_hash is not None else (
             old_state.get("queue_12_hash") if old_state else None
+        ),
+        "queue_12_message": queue_12_message if queue_12_message is not None else (
+            old_state.get("queue_12_message") if old_state else None
         ),
         "emergency_status": old_state.get("emergency_status") if old_state else None,
         "emergency_message": old_state.get("emergency_message") if old_state else None,
@@ -832,6 +837,7 @@ def process():
             "message": None,
             "sent_alerts": [],
             "queue_12_hash": None,
+            "queue_12_message": None,
             "emergency_status": None,
             "emergency_message": None,
         }
@@ -855,7 +861,7 @@ def process():
                 send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
         else:
             send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
-        save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
+        save_state(new_hash, message, old_state, sent_alerts, new_hash_12, message_12)
         log.info("Initial schedule baseline saved; queue 1.2 schedule published")
         return
 
@@ -863,23 +869,24 @@ def process():
     # Compare the queue-specific message against queue 1.2 blocks extracted from the
     # previous full-channel message; do not infer changes from the global hash.
     schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
-    schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
     old_hash_12 = old_state.get("queue_12_hash")
-    if old_hash_12 != new_hash_12:
-        old_blocks_12 = extract_queue_blocks(old_state.get("message") or "")
+    previous_queue_message = old_state.get("queue_12_message") or ""
+    queue_12_message_sent = False
+    if old_hash_12 != new_hash_12 or previous_queue_message != message_12:
+        old_blocks_12 = extract_queue_blocks(previous_queue_message)
         new_blocks_12 = extract_queue_blocks(message_12)
         old_queue_blocks = {date: body for (queue, date), body in old_blocks_12.items() if queue == "1.2"}
         new_queue_blocks = {date: body for (queue, date), body in new_blocks_12.items() if queue == "1.2"}
         # A hash can differ because an outage interval ended and disappeared from
         # today's rendered message. Publish only if remaining intervals or future dates changed.
         actual_change_12 = queue_schedule_has_real_changes(
-            old_state.get("message") or "", message_12, schedule_today
+            previous_queue_message, message_12, schedule_today
         )
 
         if actual_change_12:
             # Keep queue 1.2's existing schedule flow, but mark today's real interval changes
             # using the same 🚨 Было -> Стало format as the main channel.
-            previous_message = old_state.get("message") or ""
+            previous_message = previous_queue_message
             changed_message_12 = build_schedule_with_changes(previous_message, message_12, schedule_today)
             tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
             if tomorrow_heading in changed_message_12:
@@ -892,6 +899,7 @@ def process():
                     send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
             else:
                 send_message(add_update_time(changed_message_12), chat_id=QUEUE_12_CHAT_ID)
+            queue_12_message_sent = True
             log.info("Queue 1.2 schedule changed; published change-marked update (old blocks=%s, new blocks=%s)",
                      old_queue_blocks, new_queue_blocks)
         else:
@@ -900,8 +908,9 @@ def process():
     if old_state["hash"] == new_hash:
         if (old_state.get("message") != message or old_state.get("legacy")
                 or sent_alerts != old_state.get("sent_alerts", [])
-                or old_hash_12 != new_hash_12 or emergency_changed):
-            save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
+                or old_hash_12 != new_hash_12 or emergency_changed or queue_12_message_sent):
+            save_state(new_hash, message, old_state, sent_alerts, new_hash_12,
+                       message_12 if queue_12_message_sent else None)
         log.info("Schedule unchanged in main channel; no main schedule update sent")
         return
 
@@ -921,7 +930,8 @@ def process():
         send_message(add_update_time(schedule_with_changes))
 
     # Save only after all required schedule posts were sent successfully.
-    save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
+    save_state(new_hash, message, old_state, sent_alerts, new_hash_12,
+               message_12 if queue_12_message_sent else None)
     log.info("Main schedule update published; state saved")
 
 
