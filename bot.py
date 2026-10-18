@@ -879,7 +879,6 @@ def process():
         if actual_change_12:
             # Keep queue 1.2's existing schedule flow, but mark today's real interval changes
             # using the same 🚨 Было -> Стало format as the main channel.
-            schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
             previous_message = old_state.get("message") or ""
             changed_message_12 = build_schedule_with_changes(previous_message, message_12, schedule_today)
             tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
