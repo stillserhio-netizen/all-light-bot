@@ -613,44 +613,47 @@ def send_upcoming_event_alerts(payload, old_state):
 class DtekNoticeParser(HTMLParser):
     """Extract visible text from likely DTEK alert/banner containers."""
     TARGET_CLASSES = {"m-attention__text", "modal-content", "popup-content", "modal-body"}
+    VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.stack = []
-        self.depth = 0
         self.capture_depth = None
         self.capture_parts = []
         self.candidates = []
 
     def handle_starttag(self, tag, attrs):
-        self.depth += 1
         attrs = dict(attrs)
         classes = set((attrs.get("class") or "").split())
         is_target = bool(classes & self.TARGET_CLASSES) or attrs.get("role") == "dialog"
         if is_target and self.capture_depth is None:
-            self.capture_depth = self.depth
+            self.capture_depth = len(self.stack) + 1
             self.capture_parts = []
-        self.stack.append(tag)
+        if tag not in self.VOID_TAGS:
+            self.stack.append(tag)
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
-        self.handle_endtag(tag)
+        if tag not in self.VOID_TAGS:
+            self.handle_endtag(tag)
 
     def handle_data(self, data):
         if self.capture_depth is not None and data.strip():
             self.capture_parts.append(data.strip())
 
     def handle_endtag(self, tag):
-        if self.stack:
-            self.stack.pop()
-        if self.capture_depth == self.depth:
+        # Recover gracefully from imperfect HTML by closing through the matching tag.
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index] == tag:
+                del self.stack[index:]
+                break
+        if self.capture_depth is not None and len(self.stack) < self.capture_depth:
             text = " ".join(self.capture_parts)
-            text = re.sub(r"\\s+", " ", unescape(text)).strip()
+            text = re.sub(r"\s+", " ", unescape(text)).strip()
             if text:
                 self.candidates.append(text)
             self.capture_depth = None
             self.capture_parts = []
-        self.depth = max(0, self.depth - 1)
 
 
 def fetch_dtek_emergency_notice():
@@ -698,21 +701,24 @@ def process_emergency_status(payload, old_state):
     if raw_status:
         notice = fetch_dtek_emergency_notice()
         if notice:
-            alert_text = f"🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — КИЇВСЬКА ОБЛАСТЬ\\n\\n{notice}"
+            alert_text = f"🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — КИЇВСЬКА ОБЛАСТЬ\n\n{notice}"
         else:
             alert_text = "🚨 У Київській області діють екстрені відключення світла. Перелік районів тимчасово не вдалося отримати із сайту ДТЕК."
-        if previous_status is not True or previous_message != alert_text:
+        changed = previous_status is not True or previous_message != alert_text
+        if changed:
             send_message(alert_text)
             log.info("Emergency alert published; site_notice=%s", bool(notice))
         old_state["emergency_status"] = True
         old_state["emergency_message"] = alert_text
-        return
+        return changed
 
-    if previous_status is True:
+    changed = previous_status is True
+    if changed:
         send_message("✅ ДТЕК скасував екстрені відключення у Київській області. Стежте за актуальним графіком.")
         log.info("Emergency cancellation published")
     old_state["emergency_status"] = False
     old_state["emergency_message"] = None
+    return changed
 
 
 def process():
@@ -737,7 +743,7 @@ def process():
         }
 
     # Emergency alerts are independent of schedule changes and have their own persistent deduplication.
-    process_emergency_status(payload, old_state)
+    emergency_changed = process_emergency_status(payload, old_state)
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
 
@@ -790,7 +796,7 @@ def process():
     if old_state["hash"] == new_hash:
         if (old_state.get("message") != message or old_state.get("legacy")
                 or sent_alerts != old_state.get("sent_alerts", [])
-                or old_hash_12 != new_hash_12):
+                or old_hash_12 != new_hash_12 or emergency_changed):
             save_state(new_hash, message, old_state, sent_alerts, new_hash_12)
         log.info("Schedule unchanged in main channel; no main schedule update sent")
         return
