@@ -863,6 +863,7 @@ def process():
     # Compare the queue-specific message against queue 1.2 blocks extracted from the
     # previous full-channel message; do not infer changes from the global hash.
     schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
+    schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
     old_hash_12 = old_state.get("queue_12_hash")
     if old_hash_12 != new_hash_12:
         old_blocks_12 = extract_queue_blocks(old_state.get("message") or "")
