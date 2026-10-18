@@ -824,9 +824,14 @@ def process():
         actual_change_12 = True  # Trust the queue-specific canonical hash.
 
         if actual_change_12:
+            # Keep queue 1.2's existing schedule flow, but mark today's real interval changes
+            # using the same 🚨 Было -> Стало format as the main channel.
+            schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
+            previous_message = old_state.get("message") or ""
+            changed_message_12 = build_schedule_with_changes(previous_message, message_12, schedule_today)
             tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
-            if tomorrow_heading in message_12:
-                today_part_12, tomorrow_part_12 = message_12.split(tomorrow_heading, 1)
+            if tomorrow_heading in changed_message_12:
+                today_part_12, tomorrow_part_12 = changed_message_12.split(tomorrow_heading, 1)
                 today_part_12 = today_part_12.strip()
                 tomorrow_part_12 = (tomorrow_heading + tomorrow_part_12).strip()
                 if today_part_12:
@@ -834,8 +839,8 @@ def process():
                 if tomorrow_part_12:
                     send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
             else:
-                send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
-            log.info("Queue 1.2 schedule changed; updated dedicated channel (old blocks=%s, new blocks=%s)",
+                send_message(add_update_time(changed_message_12), chat_id=QUEUE_12_CHAT_ID)
+            log.info("Queue 1.2 schedule changed; published change-marked update (old blocks=%s, new blocks=%s)",
                      old_queue_blocks, new_queue_blocks)
         else:
             log.info("Queue 1.2 schedule unchanged; duplicate post suppressed")
