@@ -656,8 +656,26 @@ class DtekNoticeParser(HTMLParser):
             self.capture_parts = []
 
 
+def classify_emergency_notice(text):
+    """Classify a DTEK notice conservatively; unknown wording must never imply cancellation."""
+    low = text.lower()
+    cancellation_phrases = (
+        "екстрені відключення скасовуються",
+        "екстрені відключення скасовано",
+        "екстрені відключення скасовані",
+        "скасовано екстрені відключення",
+        "повертаємось до графіків",
+        "повертаємося до графіків",
+    )
+    if any(phrase in low for phrase in cancellation_phrases):
+        return "cancelled"
+    if any(word in low for word in ("екстрен", "аварійн")):
+        return "active"
+    return "unknown"
+
+
 def fetch_dtek_emergency_notice():
-    """Read current regional emergency details from DTEK's site, then official DTEK Telegram as fallback."""
+    """Read a current regional notice. Never infer cancellation from a missing banner."""
     urls = (
         ("website", "https://www.dtek-krem.com.ua/ua/shutdowns"),
         ("telegram", "https://t.me/s/dtek_ua"),
@@ -672,64 +690,83 @@ def fetch_dtek_emergency_notice():
             response.raise_for_status()
             parser = DtekNoticeParser()
             parser.feed(response.text)
-            relevant = [
+            candidates = [
                 text for text in parser.candidates
-                if any(word in text.lower() for word in ("екстрен", "аварійн", "обмеження"))
-                and not any(word in text.lower() for word in ("скасовано", "відновлено", "повертаємось до графіків"))
+                if any(word in text.lower() for word in ("екстрен", "аварійн", "відключ"))
             ]
             if source == "telegram":
-                relevant = [
-                    text for text in relevant
+                candidates = [
+                    text for text in candidates
                     if any(place in text.lower() for place in (
-                        "київщина", "київська область", "київській області", "київської області"
+                        "київщина", "київська область", "київській області", "київської області",
+                        "бучанському", "обухівському", "фастівському"
                     ))
                 ]
-            if not relevant:
-                log.warning("No current DTEK emergency notice found in %s response", source)
+            if not candidates:
+                log.warning("No emergency/cancellation notice found in %s response", source)
                 continue
-            # Telegram's public feed is newest-first; use its first relevant post.
-            # On the website, prefer the fullest matching banner.
-            notice = relevant[0] if source == "telegram" else max(relevant, key=len)
-            log.info("Emergency notice retrieved from DTEK %s", source)
-            return notice[:1500]
+            # The website banner is usually the most complete; Telegram is newest-first.
+            notice = max(candidates, key=len) if source == "website" else candidates[0]
+            status = classify_emergency_notice(notice)
+            if status != "unknown":
+                log.info("DTEK notice classified as %s from %s", status, source)
+                return {"status": status, "text": notice[:1500], "source": source}
         except Exception as exc:
-            log.warning("Could not read DTEK emergency notice from %s: %s", source, exc)
+            log.warning("Could not read DTEK notice from %s: %s", source, exc)
     return None
 
-
 def process_emergency_status(payload, old_state):
-    """Publish emergency-state transitions and district-level notice updates."""
+    """Publish only evidence-backed emergency transitions; API false alone is not cancellation."""
     region = find_region(payload)
     raw_status = region.get("emergency")
     if not isinstance(raw_status, bool):
-        log.warning("API response has no boolean emergency field for %s; skipping emergency alert check", REGION_ID)
-        return
+        log.warning("API response has no boolean emergency field for %s", REGION_ID)
+        return False
 
     previous_status = old_state.get("emergency_status")
     previous_message = old_state.get("emergency_message")
+    notice_info = fetch_dtek_emergency_notice()
+    notice_status = notice_info.get("status") if notice_info else None
+    notice_text = notice_info.get("text") if notice_info else None
 
-    if raw_status:
-        notice = fetch_dtek_emergency_notice()
-        if notice:
-            alert_text = f"🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — КИЇВСЬКА ОБЛАСТЬ\n\n{notice}"
+    # Positive evidence of active emergency on DTEK's notice overrides a stale API false.
+    if notice_status == "active" or raw_status is True:
+        if notice_status == "active" and notice_text:
+            alert_text = f"🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — КИЇВСЬКА ОБЛАСТЬ\\n\\n{notice_text}"
         else:
-            alert_text = "🚨 У Київській області діють екстрені відключення світла. Перелік районів тимчасово не вдалося отримати із сайту ДТЕК."
+            alert_text = (
+                "🚨 У Київській області діють екстрені відключення світла. "
+                "Перелік районів тимчасово не вдалося підтвердити за повідомленням ДТЕК."
+            )
         changed = previous_status is not True or previous_message != alert_text
         if changed:
             send_message(alert_text)
-            log.info("Emergency alert published; site_notice=%s", bool(notice))
+            log.info("Emergency active alert published; notice_source=%s", notice_info.get("source") if notice_info else "unavailable")
         old_state["emergency_status"] = True
         old_state["emergency_message"] = alert_text
         return changed
 
-    changed = previous_status is True
-    if changed:
-        send_message("✅ ДТЕК скасував екстрені відключення у Київській області. Стежте за актуальним графіком.")
-        log.info("Emergency cancellation published")
+    # A cancellation requires an explicit cancellation notice from DTEK.
+    if notice_status == "cancelled":
+        changed = previous_status is True
+        if changed:
+            send_message(
+                "✅ ДТЕК повідомив про скасування екстрених відключень. "
+                "Перевірте актуальне повідомлення на сайті ДТЕК: https://www.dtek-krem.com.ua/ua/shutdowns"
+            )
+            log.info("Explicit DTEK emergency cancellation published")
+        old_state["emergency_status"] = False
+        old_state["emergency_message"] = None
+        return changed
+
+    # API false + missing/unclear DTEK notice is not sufficient evidence to announce cancellation.
+    if previous_status is True:
+        log.warning("API says emergency=false, but no explicit DTEK cancellation notice; preserving emergency state")
+        return False
+
     old_state["emergency_status"] = False
     old_state["emergency_message"] = None
-    return changed
-
+    return False
 
 def process():
     payload = fetch_schedule_data()
