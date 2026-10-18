@@ -7,6 +7,8 @@ import re
 import threading
 import time
 from datetime import datetime, timedelta
+from html import unescape
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
@@ -135,6 +137,8 @@ def load_state():
             "message": state.get("message") if isinstance(state.get("message"), str) else None,
             "sent_alerts": state.get("sent_alerts", []) if isinstance(state.get("sent_alerts", []), list) else [],
             "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
+            "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
+            "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
             "legacy": False,
             "backend": "github",
             "sha": payload["sha"],
@@ -156,6 +160,10 @@ def load_state():
             return {
                 "hash": state["hash"],
                 "message": state.get("message") if isinstance(state.get("message"), str) else None,
+                "sent_alerts": state.get("sent_alerts", []) if isinstance(state.get("sent_alerts", []), list) else [],
+                "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
+                "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
+                "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
                 "legacy": False,
                 "backend": "local",
             }
@@ -179,6 +187,8 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
         "queue_12_hash": queue_12_hash if queue_12_hash is not None else (
             old_state.get("queue_12_hash") if old_state else None
         ),
+        "emergency_status": old_state.get("emergency_status") if old_state else None,
+        "emergency_message": old_state.get("emergency_message") if old_state else None,
     }
     headers = state_request_headers()
     if headers:
@@ -599,6 +609,112 @@ def send_upcoming_event_alerts(payload, old_state):
     return sent_alerts, changed
 
 
+
+class DtekNoticeParser(HTMLParser):
+    """Extract visible text from likely DTEK alert/banner containers."""
+    TARGET_CLASSES = {"m-attention__text", "modal-content", "popup-content", "modal-body"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.depth = 0
+        self.capture_depth = None
+        self.capture_parts = []
+        self.candidates = []
+
+    def handle_starttag(self, tag, attrs):
+        self.depth += 1
+        attrs = dict(attrs)
+        classes = set((attrs.get("class") or "").split())
+        is_target = bool(classes & self.TARGET_CLASSES) or attrs.get("role") == "dialog"
+        if is_target and self.capture_depth is None:
+            self.capture_depth = self.depth
+            self.capture_parts = []
+        self.stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_data(self, data):
+        if self.capture_depth is not None and data.strip():
+            self.capture_parts.append(data.strip())
+
+    def handle_endtag(self, tag):
+        if self.stack:
+            self.stack.pop()
+        if self.capture_depth == self.depth:
+            text = " ".join(self.capture_parts)
+            text = re.sub(r"\\s+", " ", unescape(text)).strip()
+            if text:
+                self.candidates.append(text)
+            self.capture_depth = None
+            self.capture_parts = []
+        self.depth = max(0, self.depth - 1)
+
+
+def fetch_dtek_emergency_notice():
+    """Return the current emergency notice text from DTEK's alert containers, if accessible."""
+    url = "https://www.dtek-krem.com.ua/ua/shutdowns"
+    try:
+        response = requests.get(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; all-light-bot/1.0)",
+                "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.5",
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        parser = DtekNoticeParser()
+        parser.feed(response.text)
+        relevant = [
+            text for text in parser.candidates
+            if any(word in text.lower() for word in ("екстрен", "аварійн", "обмеження"))
+            and not any(word in text.lower() for word in ("скасовано", "відновлено", "повертаємось до графіків"))
+        ]
+        if not relevant:
+            log.warning("DTEK emergency banner not found in HTML response")
+            return None
+        # Prefer the longest relevant banner because it is more likely to include all affected districts.
+        notice = max(relevant, key=len)
+        return notice[:1500]
+    except Exception as exc:
+        log.warning("Could not read DTEK emergency notice: %s", exc)
+        return None
+
+
+def process_emergency_status(payload, old_state):
+    """Publish emergency-state transitions and district-level notice updates."""
+    region = find_region(payload)
+    raw_status = region.get("emergency")
+    if not isinstance(raw_status, bool):
+        log.warning("API response has no boolean emergency field for %s; skipping emergency alert check", REGION_ID)
+        return
+
+    previous_status = old_state.get("emergency_status")
+    previous_message = old_state.get("emergency_message")
+
+    if raw_status:
+        notice = fetch_dtek_emergency_notice()
+        if notice:
+            alert_text = f"🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — КИЇВСЬКА ОБЛАСТЬ\\n\\n{notice}"
+        else:
+            alert_text = "🚨 У Київській області діють екстрені відключення світла. Перелік районів тимчасово не вдалося отримати із сайту ДТЕК."
+        if previous_status is not True or previous_message != alert_text:
+            send_message(alert_text)
+            log.info("Emergency alert published; site_notice=%s", bool(notice))
+        old_state["emergency_status"] = True
+        old_state["emergency_message"] = alert_text
+        return
+
+    if previous_status is True:
+        send_message("✅ ДТЕК скасував екстрені відключення у Київській області. Стежте за актуальним графіком.")
+        log.info("Emergency cancellation published")
+    old_state["emergency_status"] = False
+    old_state["emergency_message"] = None
+
+
 def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
@@ -609,12 +725,25 @@ def process():
     new_hash = hashlib.sha256(("schedule-v7|publish-tomorrow-separately|" + canonical_message).encode("utf-8")).hexdigest()
     new_hash_12 = hashlib.sha256(("schedule-v7|" + canonical_message_12).encode("utf-8")).hexdigest()
     old_state = load_state()
+    first_run = old_state is None
+    if old_state is None:
+        old_state = {
+            "hash": None,
+            "message": None,
+            "sent_alerts": [],
+            "queue_12_hash": None,
+            "emergency_status": None,
+            "emergency_message": None,
+        }
+
+    # Emergency alerts are independent of schedule changes and have their own persistent deduplication.
+    process_emergency_status(payload, old_state)
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
 
     # Upcoming event alerts are independent of whether the overall schedule changed.
     sent_alerts, _ = send_upcoming_event_alerts(payload, old_state)
-    if old_state is None:
+    if first_run:
         # Keep the existing no-initial-post behavior in the main channel, but seed the new channel.
         tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
         if tomorrow_heading in message_12:
