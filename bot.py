@@ -475,8 +475,10 @@ def queue_schedule_has_real_changes(old_message, new_message, today_date):
     today_display = display_date(today_date)
     now = datetime.now(KYIV_TZ)
     current_minutes = now.hour * 60 + now.minute
-    for key in set(old_blocks) | set(new_blocks):
-        queue, date_label = key
+    # Only compare queue 1.2; the previous full-channel message contains other queues.
+    keys = {key for key in set(old_blocks) | set(new_blocks) if key[0] == "1.2"}
+    for key in keys:
+        _, date_label = key
         old_body = old_blocks.get(key, "⚪ Даних раніше не було")
         new_body = new_blocks.get(key, "⚪ Немає даних")
         if date_label == today_display:
@@ -870,7 +872,9 @@ def process():
     # previous full-channel message; do not infer changes from the global hash.
     schedule_today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
     old_hash_12 = old_state.get("queue_12_hash")
-    previous_queue_message = old_state.get("queue_12_message") or ""
+    # Older state files may not contain queue_12_message yet. Fall back to the
+    # last full schedule message, then compare only queue 1.2 blocks.
+    previous_queue_message = old_state.get("queue_12_message") or old_state.get("message") or ""
     queue_12_message_sent = False
     if old_hash_12 != new_hash_12 or previous_queue_message != message_12:
         old_blocks_12 = extract_queue_blocks(previous_queue_message)
