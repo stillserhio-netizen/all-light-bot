@@ -30,6 +30,8 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 CHAT_ID = "-1003802691352"
 QUEUE_12_CHAT_ID = "-1004430228294"
+# Temporary safety switch: pause only queue 1.2 schedule posts while diagnosing source data.
+QUEUE_12_SCHEDULE_PUBLISH_ENABLED = os.environ.get("QUEUE_12_SCHEDULE_PUBLISH_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 HTTP_TIMEOUT = 30
 
 QUEUE_LABELS = {
@@ -848,21 +850,33 @@ def process():
     emergency_changed = process_emergency_status(payload, old_state)
 
     log.info("Parsed schedules for all available queues in %s", REGION_ID)
+    # Log raw queue 1.2 source data (today/tomorrow) for diagnosis.
+    raw_schedule = find_region(payload).get("schedule") or {}
+    today_diag = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
+    tomorrow_diag = payload.get("date_tomorrow") or (datetime.fromisoformat(today_diag).date() + timedelta(days=1)).isoformat()
+    for raw_queue, queue_days in raw_schedule.items():
+        if queue_label(raw_queue) == "1.2":
+            for diag_date in (today_diag, tomorrow_diag):
+                log.info("RAW_QUEUE_SCHEDULE queue=1.2 date=%s data=%s", diag_date, json.dumps((queue_days or {}).get(diag_date), ensure_ascii=False, sort_keys=True))
+    log.info("QUEUE_12_SCHEDULE_PUBLISH_ENABLED=%s", QUEUE_12_SCHEDULE_PUBLISH_ENABLED)
 
     # Upcoming event alerts are independent of whether the overall schedule changed.
     sent_alerts, _ = send_upcoming_event_alerts(payload, old_state)
     if first_run:
         # Keep the existing no-initial-post behavior in the main channel, but seed the new channel.
         tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
-        if tomorrow_heading in message_12:
-            today_part_12, tomorrow_part_12 = message_12.split(tomorrow_heading, 1)
-            if today_part_12.strip():
-                send_message(add_update_time(today_part_12.strip()), chat_id=QUEUE_12_CHAT_ID)
-            tomorrow_part_12 = (tomorrow_heading + tomorrow_part_12).strip()
-            if tomorrow_part_12:
-                send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
+        if QUEUE_12_SCHEDULE_PUBLISH_ENABLED:
+            if tomorrow_heading in message_12:
+                today_part_12, tomorrow_part_12 = message_12.split(tomorrow_heading, 1)
+                if today_part_12.strip():
+                    send_message(add_update_time(today_part_12.strip()), chat_id=QUEUE_12_CHAT_ID)
+                tomorrow_part_12 = (tomorrow_heading + tomorrow_part_12).strip()
+                if tomorrow_part_12:
+                    send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
+            else:
+                send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
         else:
-            send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
+            log.warning("Queue 1.2 schedule publication paused; diagnostic data logged")
         save_state(new_hash, message, old_state, sent_alerts, new_hash_12, message_12)
         log.info("Initial schedule baseline saved; queue 1.2 schedule published")
         return
@@ -876,7 +890,7 @@ def process():
     # last full schedule message, then compare only queue 1.2 blocks.
     previous_queue_message = old_state.get("queue_12_message") or old_state.get("message") or ""
     queue_12_message_sent = False
-    if old_hash_12 != new_hash_12 or previous_queue_message != message_12:
+    if QUEUE_12_SCHEDULE_PUBLISH_ENABLED and (old_hash_12 != new_hash_12 or previous_queue_message != message_12):
         old_blocks_12 = extract_queue_blocks(previous_queue_message)
         new_blocks_12 = extract_queue_blocks(message_12)
         old_queue_blocks = {date: body for (queue, date), body in old_blocks_12.items() if queue == "1.2"}
