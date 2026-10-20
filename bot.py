@@ -771,6 +771,29 @@ def fetch_dtek_emergency_notice():
             log.warning("Could not read DTEK notice from %s: %s", source, exc)
     return None
 
+def format_emergency_notice(notice_text):
+    """Format DTEK emergency notice with affected districts clearly highlighted."""
+    text = (notice_text or "").replace("\\n", "\n").replace("\\r", "")
+    text = re.sub(r"\s+", " ", text).strip()
+    low = text.lower()
+    district_names = (
+        ("БУЧАНСЬКИЙ РАЙОН", ("бучанському", "бучанський район", "бучанського району")),
+        ("ОБУХІВСЬКИЙ РАЙОН", ("обухівському", "обухівський район", "обухівського району")),
+        ("ФАСТІВСЬКИЙ РАЙОН", ("фастівському", "фастівський район", "фастівського району")),
+    )
+    affected = [label for label, variants in district_names if any(v in low for v in variants)]
+    if affected:
+        districts = "\n".join("📍 " + label for label in affected)
+        return (
+            "🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — КИЇВСЬКА ОБЛАСТЬ\n\n"
+            "‼️ Екстрені відключення застосовуються в таких районах:\n\n"
+            + districts
+            + "\n\n⚠️ Під час екстрених відключень графіки не діють.\n"
+            "💡 Про зміни повідомимо в цьому Telegram-каналі."
+        )
+    return "🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — КИЇВСЬКА ОБЛАСТЬ\n\n" + text
+
+
 def process_emergency_status(payload, old_state):
     """Publish only evidence-backed emergency transitions; API false alone is not cancellation."""
     region = find_region(payload)
@@ -788,7 +811,7 @@ def process_emergency_status(payload, old_state):
     # Positive evidence of active emergency on DTEK's notice overrides a stale API false.
     if notice_status == "active" or raw_status is True:
         if notice_status == "active" and notice_text:
-            alert_text = f"🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — КИЇВСЬКА ОБЛАСТЬ\\n\\n{notice_text}"
+            alert_text = format_emergency_notice(notice_text)
         else:
             alert_text = (
                 "🚨 У Київській області діють екстрені відключення світла. "
