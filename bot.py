@@ -713,8 +713,8 @@ class DtekNoticeParser(HTMLParser):
 
 
 def classify_emergency_notice(text):
-    """Classify a DTEK notice conservatively; unknown wording must never imply cancellation."""
-    low = text.lower()
+    """Classify only explicit current outage statements; warnings about avoiding outages are not active."""
+    low = re.sub(r"\s+", " ", (text or "").lower()).strip()
     cancellation_phrases = (
         "екстрені відключення скасовуються",
         "екстрені відключення скасовано",
@@ -725,7 +725,16 @@ def classify_emergency_notice(text):
     )
     if any(phrase in low for phrase in cancellation_phrases):
         return "cancelled"
-    if any(word in low for word in ("екстрен", "аварійн")):
+
+    # A general appeal like "щоб уникнути екстрених відключень" is not evidence
+    # that emergency outages are currently in force. Require explicit present-tense status.
+    active_patterns = (
+        r"(?:діють|застосовуються|застосовано|введені|введено|тривають|діють наразі)"
+        r".{0,100}(?:екстрен\w*|аварійн\w*).{0,40}відключ",
+        r"(?:екстрен\w*|аварійн\w*).{0,40}відключ\w*.{0,100}"
+        r"(?:діють|застосовуються|застосовано|введені|введено|тривають)",
+    )
+    if any(re.search(pattern, low) for pattern in active_patterns):
         return "active"
     return "unknown"
 
