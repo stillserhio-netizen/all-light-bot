@@ -720,14 +720,20 @@ def classify_emergency_notice(text):
         "екстрені відключення скасовано",
         "екстрені відключення скасовані",
         "скасовано екстрені відключення",
+        "аварійні відключення скасовуються",
+        "аварійні відключення скасовано",
+        "аварійні відключення скасовані",
+        "скасовано аварійні відключення",
+        "аварійні відключення припинено",
+        "аварійні відключення завершено",
         "повертаємось до графіків",
         "повертаємося до графіків",
     )
     if any(phrase in low for phrase in cancellation_phrases):
         return "cancelled"
 
-    # A general appeal like "щоб уникнути екстрених відключень" is not evidence
-    # that emergency outages are currently in force. Require explicit present-tense status.
+    # A general appeal like "щоб уникнути екстрених/аварійних відключень" is not evidence
+    # that outages are currently in force. Require explicit present-tense status.
     active_patterns = (
         r"(?:діють|застосовуються|застосовано|введені|введено|тривають|діють наразі)"
         r".{0,100}(?:екстрен\w*|аварійн\w*).{0,40}відключ",
