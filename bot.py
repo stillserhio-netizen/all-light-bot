@@ -140,6 +140,7 @@ def load_state():
             "sent_alerts": state.get("sent_alerts", []) if isinstance(state.get("sent_alerts", []), list) else [],
             "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
             "queue_12_message": state.get("queue_12_message") if isinstance(state.get("queue_12_message"), str) else None,
+            "queue_12_bootstrap_sent": state.get("queue_12_bootstrap_sent") is True,
             "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
             "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
             "legacy": False,
@@ -166,6 +167,7 @@ def load_state():
                 "sent_alerts": state.get("sent_alerts", []) if isinstance(state.get("sent_alerts", []), list) else [],
                 "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
                 "queue_12_message": state.get("queue_12_message") if isinstance(state.get("queue_12_message"), str) else None,
+                "queue_12_bootstrap_sent": state.get("queue_12_bootstrap_sent") is True,
                 "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
                 "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
                 "legacy": False,
@@ -194,6 +196,7 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
         "queue_12_message": queue_12_message if queue_12_message is not None else (
             old_state.get("queue_12_message") if old_state else None
         ),
+        "queue_12_bootstrap_sent": old_state.get("queue_12_bootstrap_sent", False) if old_state else False,
         "emergency_status": old_state.get("emergency_status") if old_state else None,
         "emergency_message": old_state.get("emergency_message") if old_state else None,
     }
@@ -928,7 +931,23 @@ def process():
     # last full schedule message, then compare only queue 1.2 blocks.
     previous_queue_message = old_state.get("queue_12_message") or old_state.get("message") or ""
     queue_12_message_sent = False
-    if QUEUE_12_SCHEDULE_PUBLISH_ENABLED and (old_hash_12 != new_hash_12 or previous_queue_message != message_12):
+    # One-time recovery publication: after enabling the dedicated channel, send its
+    # current schedule once even if the stored hash says "unchanged".
+    if QUEUE_12_SCHEDULE_PUBLISH_ENABLED and not old_state.get("queue_12_bootstrap_sent", False):
+        tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
+        if tomorrow_heading in message_12:
+            today_part_12, tomorrow_part_12 = message_12.split(tomorrow_heading, 1)
+            if today_part_12.strip():
+                send_message(add_update_time(today_part_12.strip()), chat_id=QUEUE_12_CHAT_ID)
+            tomorrow_part_12 = (tomorrow_heading + tomorrow_part_12).strip()
+            if tomorrow_part_12:
+                send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
+        else:
+            send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
+        old_state["queue_12_bootstrap_sent"] = True
+        queue_12_message_sent = True
+        log.info("Queue 1.2 recovery schedule published once after re-enabling dedicated channel")
+    elif QUEUE_12_SCHEDULE_PUBLISH_ENABLED and (old_hash_12 != new_hash_12 or previous_queue_message != message_12):
         old_blocks_12 = extract_queue_blocks(previous_queue_message)
         new_blocks_12 = extract_queue_blocks(message_12)
         old_queue_blocks = {date: body for (queue, date), body in old_blocks_12.items() if queue == "1.2"}
