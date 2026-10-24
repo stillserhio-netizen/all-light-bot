@@ -141,6 +141,7 @@ def load_state():
             "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
             "queue_12_message": state.get("queue_12_message") if isinstance(state.get("queue_12_message"), str) else None,
             "queue_12_bootstrap_sent": state.get("queue_12_bootstrap_sent") is True,
+            "queue_12_published_date": state.get("queue_12_published_date") if isinstance(state.get("queue_12_published_date"), str) else None,
             "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
             "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
             "legacy": False,
@@ -168,6 +169,7 @@ def load_state():
                 "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
                 "queue_12_message": state.get("queue_12_message") if isinstance(state.get("queue_12_message"), str) else None,
                 "queue_12_bootstrap_sent": state.get("queue_12_bootstrap_sent") is True,
+            "queue_12_published_date": state.get("queue_12_published_date") if isinstance(state.get("queue_12_published_date"), str) else None,
                 "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
                 "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
                 "legacy": False,
@@ -197,6 +199,7 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
             old_state.get("queue_12_message") if old_state else None
         ),
         "queue_12_bootstrap_sent": old_state.get("queue_12_bootstrap_sent", False) if old_state else False,
+        "queue_12_published_date": old_state.get("queue_12_published_date") if old_state else None,
         "emergency_status": old_state.get("emergency_status") if old_state else None,
         "emergency_message": old_state.get("emergency_message") if old_state else None,
     }
@@ -918,6 +921,9 @@ def process():
                 send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
         else:
             log.warning("Queue 1.2 schedule publication paused; diagnostic data logged")
+        if QUEUE_12_SCHEDULE_PUBLISH_ENABLED:
+            old_state["queue_12_bootstrap_sent"] = True
+            old_state["queue_12_published_date"] = datetime.now(KYIV_TZ).date().isoformat()
         save_state(new_hash, message, old_state, sent_alerts, new_hash_12, message_12)
         log.info("Initial schedule baseline saved; queue 1.2 schedule published")
         return
@@ -933,7 +939,12 @@ def process():
     queue_12_message_sent = False
     # One-time recovery publication: after enabling the dedicated channel, send its
     # current schedule once even if the stored hash says "unchanged".
-    if QUEUE_12_SCHEDULE_PUBLISH_ENABLED and not old_state.get("queue_12_bootstrap_sent", False):
+    today_publish_date = datetime.now(KYIV_TZ).date().isoformat()
+    needs_queue_12_bootstrap = (
+        not old_state.get("queue_12_bootstrap_sent", False)
+        or old_state.get("queue_12_published_date") != today_publish_date
+    )
+    if QUEUE_12_SCHEDULE_PUBLISH_ENABLED and needs_queue_12_bootstrap:
         tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
         if tomorrow_heading in message_12:
             today_part_12, tomorrow_part_12 = message_12.split(tomorrow_heading, 1)
@@ -945,8 +956,9 @@ def process():
         else:
             send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
         old_state["queue_12_bootstrap_sent"] = True
+        old_state["queue_12_published_date"] = today_publish_date
         queue_12_message_sent = True
-        log.info("Queue 1.2 recovery schedule published once after re-enabling dedicated channel")
+        log.info("Queue 1.2 recovery/current-day schedule published (published_date=%s)", today_publish_date)
     elif QUEUE_12_SCHEDULE_PUBLISH_ENABLED and (old_hash_12 != new_hash_12 or previous_queue_message != message_12):
         old_blocks_12 = extract_queue_blocks(previous_queue_message)
         new_blocks_12 = extract_queue_blocks(message_12)
