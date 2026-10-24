@@ -142,6 +142,7 @@ def load_state():
             "queue_12_message": state.get("queue_12_message") if isinstance(state.get("queue_12_message"), str) else None,
             "queue_12_bootstrap_sent": state.get("queue_12_bootstrap_sent") is True,
             "queue_12_published_date": state.get("queue_12_published_date") if isinstance(state.get("queue_12_published_date"), str) else None,
+            "queue_12_tomorrow_published_date": state.get("queue_12_tomorrow_published_date") if isinstance(state.get("queue_12_tomorrow_published_date"), str) else None,
             "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
             "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
             "legacy": False,
@@ -200,6 +201,7 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
         ),
         "queue_12_bootstrap_sent": old_state.get("queue_12_bootstrap_sent", False) if old_state else False,
         "queue_12_published_date": old_state.get("queue_12_published_date") if old_state else None,
+        "queue_12_tomorrow_published_date": old_state.get("queue_12_tomorrow_published_date") if old_state else None,
         "emergency_status": old_state.get("emergency_status") if old_state else None,
         "emergency_message": old_state.get("emergency_message") if old_state else None,
     }
@@ -924,6 +926,9 @@ def process():
         if QUEUE_12_SCHEDULE_PUBLISH_ENABLED:
             old_state["queue_12_bootstrap_sent"] = True
             old_state["queue_12_published_date"] = datetime.now(KYIV_TZ).date().isoformat()
+            tomorrow_date_for_state = payload.get("date_tomorrow")
+            if tomorrow_date_for_state:
+                old_state["queue_12_tomorrow_published_date"] = tomorrow_date_for_state
         save_state(new_hash, message, old_state, sent_alerts, new_hash_12, message_12)
         log.info("Initial schedule baseline saved; queue 1.2 schedule published")
         return
@@ -957,6 +962,9 @@ def process():
             send_message(add_update_time(message_12), chat_id=QUEUE_12_CHAT_ID)
         old_state["queue_12_bootstrap_sent"] = True
         old_state["queue_12_published_date"] = today_publish_date
+        tomorrow_date_for_state = payload.get("date_tomorrow")
+        if tomorrow_date_for_state:
+            old_state["queue_12_tomorrow_published_date"] = tomorrow_date_for_state
         queue_12_message_sent = True
         log.info("Queue 1.2 recovery/current-day schedule published (published_date=%s)", today_publish_date)
     elif QUEUE_12_SCHEDULE_PUBLISH_ENABLED and (old_hash_12 != new_hash_12 or previous_queue_message != message_12):
@@ -986,11 +994,30 @@ def process():
                     send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
             else:
                 send_message(add_update_time(changed_message_12), chat_id=QUEUE_12_CHAT_ID)
+            tomorrow_date_for_state = payload.get("date_tomorrow")
+            if tomorrow_date_for_state:
+                old_state["queue_12_tomorrow_published_date"] = tomorrow_date_for_state
             queue_12_message_sent = True
             log.info("Queue 1.2 schedule changed; published change-marked update (old blocks=%s, new blocks=%s)",
                      old_queue_blocks, new_queue_blocks)
         else:
             log.info("Queue 1.2 schedule unchanged; duplicate post suppressed")
+    # Publish the tomorrow section to the dedicated queue 1.2 channel once per target date,
+    # even when tomorrow has no outages and the schedule hash is unchanged.
+    tomorrow_publish_date = payload.get("date_tomorrow")
+    if QUEUE_12_SCHEDULE_PUBLISH_ENABLED and tomorrow_publish_date and old_state.get("queue_12_tomorrow_published_date") != tomorrow_publish_date:
+        tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
+        if tomorrow_heading in message_12:
+            _, tomorrow_part_12 = message_12.split(tomorrow_heading, 1)
+            tomorrow_part_12 = (tomorrow_heading + tomorrow_part_12).strip()
+            if tomorrow_part_12:
+                send_message(add_update_time(tomorrow_part_12), chat_id=QUEUE_12_CHAT_ID)
+                old_state["queue_12_tomorrow_published_date"] = tomorrow_publish_date
+                queue_12_message_sent = True
+                log.info("Queue 1.2 tomorrow schedule published (date=%s), including no-outage schedules", tomorrow_publish_date)
+        else:
+            log.warning("Queue 1.2 tomorrow section not found in rendered message (date=%s)", tomorrow_publish_date)
+
     # Main-channel schedule handling remains independent of the queue 1.2 channel.
     if old_state["hash"] == new_hash:
         if (old_state.get("message") != message or old_state.get("legacy")
