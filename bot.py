@@ -357,10 +357,10 @@ def format_day(queue, date_value, day_map, day_label, hide_past=False):
 def build_message(payload, only_queue=None, hide_past_today=True):
     region = find_region(payload)
     schedule = region.get("schedule") or {}
-    today = payload.get("date_today") or datetime.now(KYIV_TZ).date().isoformat()
-    tomorrow = payload.get("date_tomorrow") or (
-        datetime.fromisoformat(today).date() + timedelta(days=1)
-    ).isoformat()
+    # Use Kyiv's actual calendar date, not potentially stale API date labels.
+    # Around midnight the upstream API may temporarily return the same date for today/tomorrow.
+    today = datetime.now(KYIV_TZ).date().isoformat()
+    tomorrow = (datetime.now(KYIV_TZ).date() + timedelta(days=1)).isoformat()
 
     queues = sorted(
         schedule.keys(),
@@ -1004,7 +1004,7 @@ def process():
             log.info("Queue 1.2 schedule unchanged; duplicate post suppressed")
     # Publish the tomorrow section to the dedicated queue 1.2 channel once per target date,
     # even when tomorrow has no outages and the schedule hash is unchanged.
-    tomorrow_publish_date = payload.get("date_tomorrow")
+    tomorrow_publish_date = (datetime.now(KYIV_TZ).date() + timedelta(days=1)).isoformat()
     if QUEUE_12_SCHEDULE_PUBLISH_ENABLED and tomorrow_publish_date and old_state.get("queue_12_tomorrow_published_date") != tomorrow_publish_date:
         tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
         if tomorrow_heading in message_12:
