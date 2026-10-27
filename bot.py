@@ -982,7 +982,7 @@ def process():
         # If the queue-specific rendered schedule/hash changed, publish to the
         # dedicated channel. Do not let the "real changes" filter suppress a genuine
         # queue 1.2 update that the main channel already considers publishable.
-        if actual_change_12 or old_hash_12 != new_hash_12 or previous_queue_message != message_12:
+        if actual_change_12:
             # Keep queue 1.2's existing schedule flow, but mark today's real interval changes
             # using the same 🚨 Было -> Стало format as the main channel.
             previous_message = previous_queue_message
