@@ -545,12 +545,13 @@ def build_schedule_with_changes(old_message, new_message, today_date):
             changed_labels = [
                 label for label in current_labels
                 if (
-                    normalize_today_body(
-                        old_blocks.get((label, current_date), "⚪ Даних раніше не було")
-                    ) != normalize_today_body(body or "⚪ Немає даних")
-                    if current_date == today_display
-                    else old_blocks.get((label, current_date), "⚪ Даних раніше не було")
-                    != (body or "⚪ Немає даних")
+                    (label, current_date) in old_blocks
+                    and (
+                        normalize_today_body(old_blocks[(label, current_date)])
+                        != normalize_today_body(body or "⚪ Немає даних")
+                        if current_date == today_display
+                        else old_blocks[(label, current_date)] != (body or "⚪ Немає даних")
+                    )
                 )
             ]
 
