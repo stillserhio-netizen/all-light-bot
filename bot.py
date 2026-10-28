@@ -1080,10 +1080,8 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def seconds_until_next_run(now):
-    """Run exactly 15 minutes after each daytime check; hourly overnight, Kyiv time."""
-    if 6 <= now.hour <= 23:
-        return 15 * 60
-    return 60 * 60
+    """Check every 15 minutes around the clock so upcoming-event alerts are not skipped overnight."""
+    return 15 * 60
 
 
 def run_scheduler():
