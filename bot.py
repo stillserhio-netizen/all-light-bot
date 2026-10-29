@@ -653,8 +653,11 @@ def send_upcoming_event_alerts(payload, old_state):
                             0 < minutes_until <= 45,
                         )
                     if 0 < minutes_until <= 45:
-                        key = f"{queue}|{date_value}|{event}|{event_minute}"
+                        # Version the deduplication key so stale keys from earlier buggy
+                        # deployments cannot suppress delivery of current alerts.
+                        key = f"v2|{queue}|{date_value}|{event}|{event_minute}"
                         if key in sent_set:
+                            log.info("Upcoming %s alert deduplicated for queue %s at %s (key=%s)", event, queue, format_time(event_minute), key)
                             continue
                         if event == "off":
                             text = f"🔦 Черга {queue} — вимкнення світла о {format_time(event_minute)}"
@@ -671,7 +674,7 @@ def send_upcoming_event_alerts(payload, old_state):
 
     # Keep state bounded to recent and upcoming days.
     cutoff = (now.date() - timedelta(days=2)).isoformat()
-    sent_alerts = [key for key in sent_set if len(key.split("|")) == 4 and key.split("|")[1] >= cutoff]
+    sent_alerts = [key for key in sent_set if len(key.split("|")) == 5 and key.split("|")[2] >= cutoff and key.split("|")[0] == "v2"]
     return sent_alerts, changed
 
 
