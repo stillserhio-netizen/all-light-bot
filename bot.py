@@ -826,30 +826,29 @@ def format_emergency_notice(notice_text):
 
 def should_forward_emergency_to_queue_12(notice_text):
     """Forward region-wide emergency notices, or district notices that include Obukhiv district."""
-    low = re.sub(r"\\s+", " ", (notice_text or "").lower()).strip()
+    low = re.sub(r"\s+", " ", (notice_text or "").lower()).strip()
     if not low:
         return False
 
     # If Obukhiv district is named, the additional channel should receive the alert.
-    if re.search(r"\\bобухівськ\\w*\\b|\\bобуховск\\w*\\b", low):
+    if re.search(r"\bобухівськ\w*\b|\bобуховск\w*\b", low):
         return True
 
     # If the notice names other Kyiv-region districts, do not forward it to the additional channel.
     other_district_patterns = (
-        r"\\bбілоцерківськ\\w*\\b",
-        r"\\bбориспільськ\\w*\\b",
-        r"\\bброварськ\\w*\\b",
-        r"\\bбучанськ\\w*\\b",
-        r"\\bвишгородськ\\w*\\b",
-        r"\\bфастівськ\\w*\\b",
-        r"\\bрайон\\w*\\b",
+        r"\bбілоцерківськ\w*\b",
+        r"\bбориспільськ\w*\b",
+        r"\bброварськ\w*\b",
+        r"\bбучанськ\w*\b",
+        r"\bвишгородськ\w*\b",
+        r"\bфастівськ\w*\b",
+        r"\bрайон\w*\b",
     )
     if any(re.search(pattern, low) for pattern in other_district_patterns):
         return False
 
     # No district is specified: a general Kyiv Oblast emergency notice is relevant.
-    return bool(re.search(r"\\bкиївськ\\w*\\s+област\\w*\\b|\\bкиївщин\\w*\\b", low))
-
+    return bool(re.search(r"\bкиївськ\w*\s+област\w*\b|\bкиївщин\w*\b", low))
 
 def process_emergency_status(payload, old_state):
     """Publish only evidence-backed emergency transitions; API false alone is not cancellation."""
