@@ -174,6 +174,7 @@ def load_state():
             "queue_12_published_date": state.get("queue_12_published_date") if isinstance(state.get("queue_12_published_date"), str) else None,
                 "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
                 "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
+                "emergency_queue_12_sent": state.get("emergency_queue_12_sent") is True,
                 "legacy": False,
                 "backend": "local",
             }
@@ -842,7 +843,6 @@ def should_forward_emergency_to_queue_12(notice_text):
         r"\bбучанськ\w*\b",
         r"\bвишгородськ\w*\b",
         r"\bфастівськ\w*\b",
-        r"\bрайон\w*\b",
     )
     if any(re.search(pattern, low) for pattern in other_district_patterns):
         return False
