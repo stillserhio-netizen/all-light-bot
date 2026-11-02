@@ -145,6 +145,7 @@ def load_state():
             "queue_12_tomorrow_published_date": state.get("queue_12_tomorrow_published_date") if isinstance(state.get("queue_12_tomorrow_published_date"), str) else None,
             "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
             "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
+            "emergency_queue_12_sent": state.get("emergency_queue_12_sent") is True,
             "legacy": False,
             "backend": "github",
             "sha": payload["sha"],
@@ -204,6 +205,7 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
         "queue_12_tomorrow_published_date": old_state.get("queue_12_tomorrow_published_date") if old_state else None,
         "emergency_status": old_state.get("emergency_status") if old_state else None,
         "emergency_message": old_state.get("emergency_message") if old_state else None,
+        "emergency_queue_12_sent": old_state.get("emergency_queue_12_sent", False) if old_state else False,
     }
     headers = state_request_headers()
     if headers:
@@ -822,6 +824,33 @@ def format_emergency_notice(notice_text):
     return "🚨 ЕКСТРЕНІ ВІДКЛЮЧЕННЯ — КИЇВСЬКА ОБЛАСТЬ\n\n" + text
 
 
+def should_forward_emergency_to_queue_12(notice_text):
+    """Forward region-wide emergency notices, or district notices that include Obukhiv district."""
+    low = re.sub(r"\\s+", " ", (notice_text or "").lower()).strip()
+    if not low:
+        return False
+
+    # If Obukhiv district is named, the additional channel should receive the alert.
+    if re.search(r"\\bобухівськ\\w*\\b|\\bобуховск\\w*\\b", low):
+        return True
+
+    # If the notice names other Kyiv-region districts, do not forward it to the additional channel.
+    other_district_patterns = (
+        r"\\bбілоцерківськ\\w*\\b",
+        r"\\bбориспільськ\\w*\\b",
+        r"\\bброварськ\\w*\\b",
+        r"\\bбучанськ\\w*\\b",
+        r"\\bвишгородськ\\w*\\b",
+        r"\\bфастівськ\\w*\\b",
+        r"\\bрайон\\w*\\b",
+    )
+    if any(re.search(pattern, low) for pattern in other_district_patterns):
+        return False
+
+    # No district is specified: a general Kyiv Oblast emergency notice is relevant.
+    return bool(re.search(r"\\bкиївськ\\w*\\s+област\\w*\\b|\\bкиївщин\\w*\\b", low))
+
+
 def process_emergency_status(payload, old_state):
     """Publish only evidence-backed emergency transitions; API false alone is not cancellation."""
     region = find_region(payload)
@@ -849,19 +878,43 @@ def process_emergency_status(payload, old_state):
         if changed:
             send_message(alert_text)
             log.info("Emergency active alert published; notice_source=%s", notice_info.get("source") if notice_info else "unavailable")
+
+        # Recover a missed initial post after deployment: old state files have no forwarding flag.
+        forward_to_queue_12 = should_forward_emergency_to_queue_12(notice_text or alert_text)
+        was_forwarded_to_queue_12 = old_state.get("emergency_queue_12_sent") is True
+        forwarding_changed = False
+        if forward_to_queue_12 and (changed or not was_forwarded_to_queue_12):
+            send_message(alert_text, chat_id=QUEUE_12_CHAT_ID)
+            log.info("Emergency active alert forwarded to additional channel; source=%s", notice_info.get("source") if notice_info else "API fallback")
+            forwarding_changed = True
+        elif not forward_to_queue_12 and was_forwarded_to_queue_12:
+            send_message(
+                "⚠️ Оновлення екстрених відключень: у новому повідомленні ДТЕК Обухівський район "
+                "не зазначений серед районів, де застосовуються екстрені відключення. "
+                "Перевірте актуальну інформацію перед висновками щодо своєї адреси.",
+                chat_id=QUEUE_12_CHAT_ID,
+            )
+            log.info("Emergency update sent to additional channel because its previous target notice no longer applies")
+            forwarding_changed = True
+        old_state["emergency_queue_12_sent"] = forward_to_queue_12
         old_state["emergency_status"] = True
         old_state["emergency_message"] = alert_text
-        return changed
+        return changed or forwarding_changed
 
     # A cancellation requires an explicit cancellation notice from DTEK.
     if notice_status == "cancelled":
         changed = previous_status is True
         if changed:
-            send_message(
+            cancellation_message = (
                 "✅ ДТЕК повідомив про скасування екстрених відключень. "
                 "Перевірте актуальне повідомлення на сайті ДТЕК: https://www.dtek-krem.com.ua/ua/shutdowns"
             )
+            send_message(cancellation_message)
+            if old_state.get("emergency_queue_12_sent") is True:
+                send_message(cancellation_message, chat_id=QUEUE_12_CHAT_ID)
+                log.info("Emergency cancellation forwarded to additional channel")
             log.info("Explicit DTEK emergency cancellation published")
+        old_state["emergency_queue_12_sent"] = False
         old_state["emergency_status"] = False
         old_state["emergency_message"] = None
         return changed
@@ -895,6 +948,7 @@ def process():
             "queue_12_message": None,
             "emergency_status": None,
             "emergency_message": None,
+            "emergency_queue_12_sent": False,
         }
 
     # Emergency alerts are independent of schedule changes and have their own persistent deduplication.
