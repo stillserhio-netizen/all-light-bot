@@ -632,10 +632,22 @@ def send_upcoming_event_alerts(payload, old_state):
             slots = get_slots(day_map)
             if not slots:
                 continue
+
+            # At 00:00, compare against the final half-hour of the previous
+            # calendar day's schedule. This prevents a continuous outage that
+            # crosses midnight from generating a second "power off" alert.
+            previous_date = (datetime.fromisoformat(date_value).date() - timedelta(days=1)).isoformat()
+            previous_day_slots = get_slots((queue_days or {}).get(previous_date))
+            previous_day_last_status = previous_day_slots[-1] if previous_day_slots else "unknown"
+
             for minute in range(0, 24 * 60, 30):
                 idx = minute // 30
                 status = slots[idx]
-                previous = slots[idx - 1] if idx > 0 else "unknown"
+                previous = (
+                    slots[idx - 1]
+                    if idx > 0
+                    else previous_day_last_status
+                )
                 next_status = slots[idx + 1] if idx + 1 < len(slots) else "unknown"
                 events = []
                 if status == "off" and previous != "off":
