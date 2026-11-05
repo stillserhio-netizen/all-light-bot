@@ -864,27 +864,22 @@ def process_emergency_status(payload, old_state):
     notice_status = notice_info.get("status") if notice_info else None
     notice_text = notice_info.get("text") if notice_info else None
 
-    # Positive evidence of active emergency on DTEK's notice overrides a stale API false.
-    if notice_status == "active" or raw_status is True:
-        if notice_status == "active" and notice_text:
-            alert_text = format_emergency_notice(notice_text)
-        else:
-            alert_text = (
-                "🚨 У Київській області діють екстрені відключення світла. "
-                "Перелік районів тимчасово не вдалося підтвердити за повідомленням ДТЕК."
-            )
+    # A current DTEK notice is the source for message text. The API boolean is
+    # only a fallback for detecting an emergency when no prior alert exists.
+    if notice_status == "active" and notice_text:
+        alert_text = format_emergency_notice(notice_text)
         changed = previous_status is not True or previous_message != alert_text
         if changed:
             send_message(alert_text)
-            log.info("Emergency active alert published; notice_source=%s", notice_info.get("source") if notice_info else "unavailable")
+            log.info("Emergency active alert published; notice_source=%s", notice_info.get("source") if notice_info else "telegram")
 
-        # Recover a missed initial post after deployment: old state files have no forwarding flag.
-        forward_to_queue_12 = should_forward_emergency_to_queue_12(notice_text or alert_text)
+        # Forward the confirmed DTEK notice to queue 1.2 only when its district filter matches.
+        forward_to_queue_12 = should_forward_emergency_to_queue_12(notice_text)
         was_forwarded_to_queue_12 = old_state.get("emergency_queue_12_sent") is True
         forwarding_changed = False
         if forward_to_queue_12 and (changed or not was_forwarded_to_queue_12):
             send_message(alert_text, chat_id=QUEUE_12_CHAT_ID)
-            log.info("Emergency active alert forwarded to additional channel; source=%s", notice_info.get("source") if notice_info else "API fallback")
+            log.info("Emergency active alert forwarded to additional channel; source=%s", notice_info.get("source") if notice_info else "telegram")
             forwarding_changed = True
         elif not forward_to_queue_12 and was_forwarded_to_queue_12:
             send_message(
@@ -899,6 +894,32 @@ def process_emergency_status(payload, old_state):
         old_state["emergency_status"] = True
         old_state["emergency_message"] = alert_text
         return changed or forwarding_changed
+
+    # If the API still reports an active emergency but DTEK's notice is temporarily
+    # unavailable, do not replace a previously published detailed notice with a
+    # generic fallback message every polling cycle. Preserve the last confirmed text.
+    if raw_status is True and previous_status is True:
+        log.warning(
+            "Emergency remains active but DTEK notice is unavailable; keeping the last published alert and suppressing fallback duplicate"
+        )
+        return False
+
+    # First-ever detection may use one generic fallback alert. It is sent once and
+    # then protected by the previous_status check above until DTEK provides a notice.
+    if raw_status is True:
+        alert_text = (
+            "🚨 У Київській області діють екстрені відключення світла. "
+            "Перелік районів тимчасово не вдалося підтвердити за повідомленням ДТЕК."
+        )
+        send_message(alert_text)
+        log.info("Emergency active fallback alert published once; notice_source=API")
+        if should_forward_emergency_to_queue_12(alert_text):
+            send_message(alert_text, chat_id=QUEUE_12_CHAT_ID)
+            old_state["emergency_queue_12_sent"] = True
+            log.info("Emergency fallback alert forwarded to additional channel")
+        old_state["emergency_status"] = True
+        old_state["emergency_message"] = alert_text
+        return True
 
     # A cancellation requires an explicit cancellation notice from DTEK.
     if notice_status == "cancelled":
