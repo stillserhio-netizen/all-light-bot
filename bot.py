@@ -30,6 +30,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 CHAT_ID = "-1003802691352"
 QUEUE_12_CHAT_ID = "-1004430228294"
+QUEUE_32_CHAT_ID = "-1003903972705"
 # Temporary safety switch: pause only queue 1.2 schedule posts while diagnosing source data.
 QUEUE_12_SCHEDULE_PUBLISH_ENABLED = os.environ.get("QUEUE_12_SCHEDULE_PUBLISH_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 HTTP_TIMEOUT = 30
@@ -143,9 +144,15 @@ def load_state():
             "queue_12_bootstrap_sent": state.get("queue_12_bootstrap_sent") is True,
             "queue_12_published_date": state.get("queue_12_published_date") if isinstance(state.get("queue_12_published_date"), str) else None,
             "queue_12_tomorrow_published_date": state.get("queue_12_tomorrow_published_date") if isinstance(state.get("queue_12_tomorrow_published_date"), str) else None,
+            "queue_32_hash": state.get("queue_32_hash") if isinstance(state.get("queue_32_hash"), str) else None,
+            "queue_32_message": state.get("queue_32_message") if isinstance(state.get("queue_32_message"), str) else None,
+            "queue_32_bootstrap_sent": state.get("queue_32_bootstrap_sent") is True,
+            "queue_32_published_date": state.get("queue_32_published_date") if isinstance(state.get("queue_32_published_date"), str) else None,
+            "queue_32_tomorrow_published_date": state.get("queue_32_tomorrow_published_date") if isinstance(state.get("queue_32_tomorrow_published_date"), str) else None,
             "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
             "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
             "emergency_queue_12_sent": state.get("emergency_queue_12_sent") is True,
+            "emergency_queue_32_sent": state.get("emergency_queue_32_sent") is True,
             "legacy": False,
             "backend": "github",
             "sha": payload["sha"],
@@ -171,10 +178,17 @@ def load_state():
                 "queue_12_hash": state.get("queue_12_hash") if isinstance(state.get("queue_12_hash"), str) else None,
                 "queue_12_message": state.get("queue_12_message") if isinstance(state.get("queue_12_message"), str) else None,
                 "queue_12_bootstrap_sent": state.get("queue_12_bootstrap_sent") is True,
-            "queue_12_published_date": state.get("queue_12_published_date") if isinstance(state.get("queue_12_published_date"), str) else None,
+                "queue_12_published_date": state.get("queue_12_published_date") if isinstance(state.get("queue_12_published_date"), str) else None,
+                "queue_12_tomorrow_published_date": state.get("queue_12_tomorrow_published_date") if isinstance(state.get("queue_12_tomorrow_published_date"), str) else None,
+                "queue_32_hash": state.get("queue_32_hash") if isinstance(state.get("queue_32_hash"), str) else None,
+                "queue_32_message": state.get("queue_32_message") if isinstance(state.get("queue_32_message"), str) else None,
+                "queue_32_bootstrap_sent": state.get("queue_32_bootstrap_sent") is True,
+                "queue_32_published_date": state.get("queue_32_published_date") if isinstance(state.get("queue_32_published_date"), str) else None,
+                "queue_32_tomorrow_published_date": state.get("queue_32_tomorrow_published_date") if isinstance(state.get("queue_32_tomorrow_published_date"), str) else None,
                 "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
                 "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
                 "emergency_queue_12_sent": state.get("emergency_queue_12_sent") is True,
+                "emergency_queue_32_sent": state.get("emergency_queue_32_sent") is True,
                 "legacy": False,
                 "backend": "local",
             }
@@ -204,9 +218,15 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
         "queue_12_bootstrap_sent": old_state.get("queue_12_bootstrap_sent", False) if old_state else False,
         "queue_12_published_date": old_state.get("queue_12_published_date") if old_state else None,
         "queue_12_tomorrow_published_date": old_state.get("queue_12_tomorrow_published_date") if old_state else None,
+        "queue_32_hash": old_state.get("queue_32_hash") if old_state else None,
+        "queue_32_message": old_state.get("queue_32_message") if old_state else None,
+        "queue_32_bootstrap_sent": old_state.get("queue_32_bootstrap_sent", False) if old_state else False,
+        "queue_32_published_date": old_state.get("queue_32_published_date") if old_state else None,
+        "queue_32_tomorrow_published_date": old_state.get("queue_32_tomorrow_published_date") if old_state else None,
         "emergency_status": old_state.get("emergency_status") if old_state else None,
         "emergency_message": old_state.get("emergency_message") if old_state else None,
         "emergency_queue_12_sent": old_state.get("emergency_queue_12_sent", False) if old_state else False,
+        "emergency_queue_32_sent": old_state.get("emergency_queue_32_sent", False) if old_state else False,
     }
     headers = state_request_headers()
     if headers:
@@ -502,6 +522,26 @@ def queue_schedule_has_real_changes(old_message, new_message, today_date):
     return False
 
 
+def queue_32_schedule_has_real_changes(old_message, new_message, today_date):
+    """Ignore elapsed intervals today, comparing only queue 3.2."""
+    old_blocks = extract_queue_blocks(old_message or "")
+    new_blocks = extract_queue_blocks(new_message or "")
+    today_display = display_date(today_date)
+    now = datetime.now(KYIV_TZ)
+    current_minutes = now.hour * 60 + now.minute
+    keys = {key for key in set(old_blocks) | set(new_blocks) if key[0] == "3.2"}
+    for key in keys:
+        _, date_label = key
+        old_body = old_blocks.get(key, "⚪ Даних раніше не було")
+        new_body = new_blocks.get(key, "⚪ Немає даних")
+        if date_label == today_display:
+            old_body = normalize_elapsed_schedule_body(old_body, current_minutes)
+            new_body = normalize_elapsed_schedule_body(new_body, current_minutes)
+        if old_body != new_body:
+            return True
+    return False
+
+
 def build_schedule_with_changes(old_message, new_message, today_date):
     """Mark real schedule changes, ignoring outages that have already ended."""
     old_blocks = extract_queue_blocks(old_message or "")
@@ -682,6 +722,9 @@ def send_upcoming_event_alerts(payload, old_state):
                         if queue == "1.2":
                             send_message(text, chat_id=QUEUE_12_CHAT_ID)
                             log.info("Upcoming %s alert sent to queue 1.2 channel at %s", event, format_time(event_minute))
+                        elif queue == "3.2":
+                            send_message(text, chat_id=QUEUE_32_CHAT_ID)
+                            log.info("Upcoming %s alert sent to queue 3.2 channel at %s", event, format_time(event_minute))
                         send_message(text)
                         sent_set.add(key)
                         changed = True
@@ -903,6 +946,21 @@ def process_emergency_status(payload, old_state):
             log.info("Emergency update sent to additional channel because its previous target notice no longer applies")
             forwarding_changed = True
         old_state["emergency_queue_12_sent"] = forward_to_queue_12
+        forward_to_queue_32 = should_forward_emergency_to_queue_12(notice_text)
+        was_forwarded_to_queue_32 = old_state.get("emergency_queue_32_sent") is True
+        if forward_to_queue_32 and (changed or not was_forwarded_to_queue_32):
+            send_message(alert_text, chat_id=QUEUE_32_CHAT_ID)
+            log.info("Emergency active alert forwarded to queue 3.2 channel")
+            forwarding_changed = True
+        elif not forward_to_queue_32 and was_forwarded_to_queue_32:
+            send_message(
+                "⚠️ Оновлення екстрених відключень: у новому повідомленні ДТЕК Обухівський район "
+                "не зазначений серед районів, де застосовуються екстрені відключення. "
+                "Перевірте актуальну інформацію перед висновками щодо своєї адреси.",
+                chat_id=QUEUE_32_CHAT_ID,
+            )
+            forwarding_changed = True
+        old_state["emergency_queue_32_sent"] = forward_to_queue_32
         old_state["emergency_status"] = True
         old_state["emergency_message"] = alert_text
         return changed or forwarding_changed
@@ -929,6 +987,9 @@ def process_emergency_status(payload, old_state):
             send_message(alert_text, chat_id=QUEUE_12_CHAT_ID)
             old_state["emergency_queue_12_sent"] = True
             log.info("Emergency fallback alert forwarded to additional channel")
+            send_message(alert_text, chat_id=QUEUE_32_CHAT_ID)
+            old_state["emergency_queue_32_sent"] = True
+            log.info("Emergency fallback alert forwarded to queue 3.2 channel")
         old_state["emergency_status"] = True
         old_state["emergency_message"] = alert_text
         return True
@@ -945,8 +1006,12 @@ def process_emergency_status(payload, old_state):
             if old_state.get("emergency_queue_12_sent") is True:
                 send_message(cancellation_message, chat_id=QUEUE_12_CHAT_ID)
                 log.info("Emergency cancellation forwarded to additional channel")
+            if old_state.get("emergency_queue_32_sent") is True:
+                send_message(cancellation_message, chat_id=QUEUE_32_CHAT_ID)
+                log.info("Emergency cancellation forwarded to queue 3.2 channel")
             log.info("Explicit DTEK emergency cancellation published")
         old_state["emergency_queue_12_sent"] = False
+        old_state["emergency_queue_32_sent"] = False
         old_state["emergency_status"] = False
         old_state["emergency_message"] = None
         return changed
@@ -964,11 +1029,14 @@ def process():
     payload = fetch_schedule_data()
     message = build_message(payload)
     message_12 = build_message(payload, only_queue="1.2")
+    message_32 = build_message(payload, only_queue="3.2")
     # Hash the full schedule, including elapsed intervals, so the rendered message changing as time passes does not trigger duplicate posts.
     canonical_message = build_message(payload, hide_past_today=False)
     canonical_message_12 = build_message(payload, only_queue="1.2", hide_past_today=False)
+    canonical_message_32 = build_message(payload, only_queue="3.2", hide_past_today=False)
     new_hash = hashlib.sha256(("schedule-v7|publish-tomorrow-separately|" + canonical_message).encode("utf-8")).hexdigest()
     new_hash_12 = hashlib.sha256(("schedule-v7|" + canonical_message_12).encode("utf-8")).hexdigest()
+    new_hash_32 = hashlib.sha256(("schedule-v7|queue-3.2|" + canonical_message_32).encode("utf-8")).hexdigest()
     old_state = load_state()
     first_run = old_state is None
     if old_state is None:
@@ -978,9 +1046,15 @@ def process():
             "sent_alerts": [],
             "queue_12_hash": None,
             "queue_12_message": None,
+            "queue_32_hash": None,
+            "queue_32_message": None,
+            "queue_32_bootstrap_sent": False,
+            "queue_32_published_date": None,
+            "queue_32_tomorrow_published_date": None,
             "emergency_status": None,
             "emergency_message": None,
             "emergency_queue_12_sent": False,
+            "emergency_queue_32_sent": False,
         }
 
     # Emergency alerts are independent of schedule changes and have their own persistent deduplication.
@@ -1020,8 +1094,24 @@ def process():
             tomorrow_date_for_state = payload.get("date_tomorrow")
             if tomorrow_date_for_state:
                 old_state["queue_12_tomorrow_published_date"] = tomorrow_date_for_state
+        if message_32.strip():
+            tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
+            if tomorrow_heading in message_32:
+                today_part_32, tomorrow_part_32 = message_32.split(tomorrow_heading, 1)
+                if today_part_32.strip():
+                    send_message(add_update_time(today_part_32.strip()), chat_id=QUEUE_32_CHAT_ID)
+                tomorrow_part_32 = (tomorrow_heading + tomorrow_part_32).strip()
+                if tomorrow_part_32:
+                    send_message(add_update_time(tomorrow_part_32), chat_id=QUEUE_32_CHAT_ID)
+            else:
+                send_message(add_update_time(message_32), chat_id=QUEUE_32_CHAT_ID)
+        old_state["queue_32_hash"] = new_hash_32
+        old_state["queue_32_message"] = message_32
+        old_state["queue_32_bootstrap_sent"] = True
+        old_state["queue_32_published_date"] = datetime.now(KYIV_TZ).date().isoformat()
+        old_state["queue_32_tomorrow_published_date"] = payload.get("date_tomorrow")
         save_state(new_hash, message, old_state, sent_alerts, new_hash_12, message_12)
-        log.info("Initial schedule baseline saved; queue 1.2 schedule published")
+        log.info("Initial schedule baseline saved; queue 1.2 and 3.2 schedules published")
         return
 
     # Publish queue 1.2 whenever its actual addressable schedule blocks change.
@@ -1112,11 +1202,66 @@ def process():
         else:
             log.warning("Queue 1.2 tomorrow section not found in rendered message (date=%s)", tomorrow_publish_date)
 
-    # Main-channel schedule handling remains independent of the queue 1.2 channel.
+    # Queue 3.2 has its own schedule state and publication flow.
+    old_hash_32 = old_state.get("queue_32_hash")
+    previous_queue_32_message = old_state.get("queue_32_message") or ""
+    queue_32_message_sent = False
+    today_publish_date_32 = datetime.now(KYIV_TZ).date().isoformat()
+    needs_queue_32_bootstrap = (
+        not old_state.get("queue_32_bootstrap_sent", False)
+        or old_state.get("queue_32_published_date") != today_publish_date_32
+    )
+    if needs_queue_32_bootstrap and message_32.strip():
+        tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
+        if tomorrow_heading in message_32:
+            today_part_32, tomorrow_part_32 = message_32.split(tomorrow_heading, 1)
+            if today_part_32.strip():
+                send_message(add_update_time(today_part_32.strip()), chat_id=QUEUE_32_CHAT_ID)
+            tomorrow_part_32 = (tomorrow_heading + tomorrow_part_32).strip()
+            if tomorrow_part_32:
+                send_message(add_update_time(tomorrow_part_32), chat_id=QUEUE_32_CHAT_ID)
+        else:
+            send_message(add_update_time(message_32), chat_id=QUEUE_32_CHAT_ID)
+        old_state["queue_32_bootstrap_sent"] = True
+        old_state["queue_32_published_date"] = today_publish_date_32
+        old_state["queue_32_tomorrow_published_date"] = payload.get("date_tomorrow")
+        queue_32_message_sent = True
+        log.info("Queue 3.2 current schedule published")
+    elif old_hash_32 != new_hash_32 or previous_queue_32_message != message_32:
+        if queue_32_schedule_has_real_changes(previous_queue_32_message, message_32, schedule_today):
+            changed_message_32 = build_schedule_with_changes(previous_queue_32_message, message_32, schedule_today)
+            tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
+            if tomorrow_heading in changed_message_32:
+                today_part_32, tomorrow_part_32 = changed_message_32.split(tomorrow_heading, 1)
+                if today_part_32.strip():
+                    send_message(add_update_time(today_part_32.strip()), chat_id=QUEUE_32_CHAT_ID)
+                tomorrow_part_32 = (tomorrow_heading + tomorrow_part_32).strip()
+                if tomorrow_part_32:
+                    send_message(add_update_time(tomorrow_part_32), chat_id=QUEUE_32_CHAT_ID)
+            else:
+                send_message(add_update_time(changed_message_32), chat_id=QUEUE_32_CHAT_ID)
+            queue_32_message_sent = True
+            old_state["queue_32_tomorrow_published_date"] = payload.get("date_tomorrow")
+            log.info("Queue 3.2 schedule change published")
+    tomorrow_publish_date_32 = (datetime.now(KYIV_TZ).date() + timedelta(days=1)).isoformat()
+    if old_state.get("queue_32_tomorrow_published_date") != tomorrow_publish_date_32:
+        tomorrow_heading = "📅 ГРАФІК НА ЗАВТРА"
+        if tomorrow_heading in message_32:
+            _, tomorrow_part_32 = message_32.split(tomorrow_heading, 1)
+            tomorrow_part_32 = (tomorrow_heading + tomorrow_part_32).strip()
+            if tomorrow_part_32:
+                send_message(add_update_time(tomorrow_part_32), chat_id=QUEUE_32_CHAT_ID)
+                old_state["queue_32_tomorrow_published_date"] = tomorrow_publish_date_32
+                queue_32_message_sent = True
+
+    old_state["queue_32_hash"] = new_hash_32
+    old_state["queue_32_message"] = message_32
+    # Main-channel schedule handling remains independent of both dedicated channels.
     if old_state["hash"] == new_hash:
         if (old_state.get("message") != message or old_state.get("legacy")
                 or sent_alerts != old_state.get("sent_alerts", [])
-                or old_hash_12 != new_hash_12 or emergency_changed or queue_12_message_sent):
+                or old_hash_12 != new_hash_12 or emergency_changed or queue_12_message_sent
+                or queue_32_message_sent or old_hash_32 != new_hash_32):
             save_state(new_hash, message, old_state, sent_alerts, new_hash_12,
                        message_12 if queue_12_message_sent else None)
         log.info("Schedule unchanged in main channel; no main schedule update sent")
