@@ -276,7 +276,7 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
 def add_update_time(message):
     now = datetime.now(KYIV_TZ)
     timestamp = f"🕒 Час оновлення: {now.strftime('%d.%m.%Y о %H:%M')}"
-    return f"{timestamp}\n\n{message}"
+    return f"{message}\n\n{timestamp}"
 
 
 def display_date(date_value):
