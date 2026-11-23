@@ -275,7 +275,8 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
 
 def add_update_time(message):
     now = datetime.now(KYIV_TZ)
-    return f"{message}\n\n🕒 Час оновлення: {now.strftime('%d.%m.%Y о %H:%M')}"
+    timestamp = f"🕒 Час оновлення: {now.strftime('%d.%m.%Y о %H:%M')}"
+    return f"{timestamp}\n\n{message}\n\n{timestamp}"
 
 
 def display_date(date_value):
@@ -647,12 +648,12 @@ def build_schedule_with_changes(old_message, new_message, today_date):
                     previous = "⚪ Даних раніше не було"
                 else:
                     previous = normalize_today_body(previous)
-                previous_parts.append(f"{label}: {previous.replace(chr(10), ' / ')}")
+                previous_parts.append(f"{label}:\\n{previous}")
             changed_header = f"Черга {', '.join(changed_labels)} — {current_date}"
             output.append(f"🚨 {changed_header}")
             output.append(f"Було → Стало:")
             output.append(f"🔻 Було: {'; '.join(previous_parts)}")
-            output.append(f"🔺 Стало: {body.replace(chr(10), ' / ')}")
+            output.append(f"🔺 Стало: \\n{body}")
             output.append("")
 
         # Do not lose queues grouped with a changed queue if their own schedule did not change.
