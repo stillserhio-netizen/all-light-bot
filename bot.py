@@ -648,12 +648,12 @@ def build_schedule_with_changes(old_message, new_message, today_date):
                     previous = "⚪ Даних раніше не було"
                 else:
                     previous = normalize_today_body(previous)
-                previous_parts.append(f"{label}:\\n{previous}")
+                previous_parts.append(f"{label}:\n{previous}")
             changed_header = f"Черга {', '.join(changed_labels)} — {current_date}"
             output.append(f"🚨 {changed_header}")
             output.append(f"Було → Стало:")
             output.append(f"🔻 Було: {'; '.join(previous_parts)}")
-            output.append(f"🔺 Стало: \\n{body}")
+            output.append(f"🔺 Стало: \n{body}")
             output.append("")
 
         # Do not lose queues grouped with a changed queue if their own schedule did not change.
