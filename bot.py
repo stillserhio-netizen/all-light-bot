@@ -158,6 +158,7 @@ def load_state():
             "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
             "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
             "emergency_queue_12_sent": state.get("emergency_queue_12_sent") is True,
+            "emergency_queue_12_message": state.get("emergency_queue_12_message") if isinstance(state.get("emergency_queue_12_message"), str) else None,
             "emergency_queue_32_sent": state.get("emergency_queue_32_sent") is True,
             "emergency_queue_11_sent": state.get("emergency_queue_11_sent") is True,
             "legacy": False,
@@ -200,6 +201,7 @@ def load_state():
                 "emergency_status": state.get("emergency_status") if isinstance(state.get("emergency_status"), bool) else None,
                 "emergency_message": state.get("emergency_message") if isinstance(state.get("emergency_message"), str) else None,
                 "emergency_queue_12_sent": state.get("emergency_queue_12_sent") is True,
+            "emergency_queue_12_message": state.get("emergency_queue_12_message") if isinstance(state.get("emergency_queue_12_message"), str) else None,
                 "emergency_queue_32_sent": state.get("emergency_queue_32_sent") is True,
             "emergency_queue_11_sent": state.get("emergency_queue_11_sent") is True,
                 "legacy": False,
@@ -244,6 +246,7 @@ def save_state(value, message, old_state=None, sent_alerts=None, queue_12_hash=N
         "emergency_status": old_state.get("emergency_status") if old_state else None,
         "emergency_message": old_state.get("emergency_message") if old_state else None,
         "emergency_queue_12_sent": old_state.get("emergency_queue_12_sent", False) if old_state else False,
+        "emergency_queue_12_message": old_state.get("emergency_queue_12_message") if old_state else None,
         "emergency_queue_32_sent": old_state.get("emergency_queue_32_sent", False) if old_state else False,
         "emergency_queue_11_sent": old_state.get("emergency_queue_11_sent", False) if old_state else False,
     }
@@ -976,10 +979,25 @@ def process_emergency_status(payload, old_state):
         # Forward the confirmed DTEK notice to queue 1.2 only when its district filter matches.
         forward_to_queue_12 = should_forward_emergency_to_queue_12(notice_text)
         was_forwarded_to_queue_12 = old_state.get("emergency_queue_12_sent") is True
+        previously_forwarded_message_12 = old_state.get("emergency_queue_12_message")
         forwarding_changed = False
-        if forward_to_queue_12 and (changed or not was_forwarded_to_queue_12):
+        # Track the exact notice delivered to queue 1.2. A legacy True flag without
+        # its message fingerprint is not proof of delivery, so resend it once.
+        queue_12_delivery_needed = (
+            forward_to_queue_12
+            and (
+                changed
+                or not was_forwarded_to_queue_12
+                or previously_forwarded_message_12 != alert_text
+            )
+        )
+        if queue_12_delivery_needed:
             send_message(alert_text, chat_id=QUEUE_12_CHAT_ID)
-            log.info("Emergency active alert forwarded to additional channel; source=%s", notice_info.get("source") if notice_info else "telegram")
+            log.info(
+                "Emergency active alert forwarded to queue 1.2 channel; source=%s; reason=%s",
+                notice_info.get("source") if notice_info else "telegram",
+                "new_or_changed_notice" if changed or previously_forwarded_message_12 != alert_text else "delivery_flag_not_set",
+            )
             forwarding_changed = True
         elif not forward_to_queue_12 and was_forwarded_to_queue_12:
             send_message(
@@ -991,6 +1009,7 @@ def process_emergency_status(payload, old_state):
             log.info("Emergency update sent to additional channel because its previous target notice no longer applies")
             forwarding_changed = True
         old_state["emergency_queue_12_sent"] = forward_to_queue_12
+        old_state["emergency_queue_12_message"] = alert_text if forward_to_queue_12 else None
         forward_to_queue_32 = should_forward_emergency_to_queue_12(notice_text)
         was_forwarded_to_queue_32 = old_state.get("emergency_queue_32_sent") is True
         if forward_to_queue_32 and (changed or not was_forwarded_to_queue_32):
